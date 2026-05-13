@@ -6,7 +6,8 @@ const BINDING_DATA_VERSION = 1;
 export type CodexAppServerConversationBindingData = {
   kind: "codex-app-server-session";
   version: 1;
-  sessionFile: string;
+  sessionKey?: string;
+  sessionId: string;
   workspaceDir: string;
 };
 
@@ -23,13 +24,15 @@ export type CodexConversationBindingData =
   | CodexCliNodeConversationBindingData;
 
 export function createCodexConversationBindingData(params: {
-  sessionFile: string;
+  sessionKey?: string;
+  sessionId: string;
   workspaceDir: string;
 }): CodexAppServerConversationBindingData {
   return {
     kind: "codex-app-server-session",
     version: BINDING_DATA_VERSION,
-    sessionFile: params.sessionFile,
+    sessionKey: params.sessionKey?.trim() || undefined,
+    sessionId: params.sessionId,
     workspaceDir: params.workspaceDir,
   };
 }
@@ -85,15 +88,21 @@ export function readCodexConversationBindingDataRecord(
   }
   if (
     data.version !== BINDING_DATA_VERSION ||
-    typeof data.sessionFile !== "string" ||
-    !data.sessionFile.trim()
+    !(
+      (typeof data.sessionKey === "string" && data.sessionKey.trim()) ||
+      (typeof data.sessionId === "string" && data.sessionId.trim())
+    )
   ) {
     return undefined;
   }
   return {
     kind: "codex-app-server-session",
     version: BINDING_DATA_VERSION,
-    sessionFile: data.sessionFile,
+    sessionKey:
+      typeof data.sessionKey === "string" && data.sessionKey.trim()
+        ? data.sessionKey.trim()
+        : undefined,
+    sessionId: typeof data.sessionId === "string" && data.sessionId.trim() ? data.sessionId : "",
     workspaceDir:
       typeof data.workspaceDir === "string" && data.workspaceDir.trim()
         ? data.workspaceDir

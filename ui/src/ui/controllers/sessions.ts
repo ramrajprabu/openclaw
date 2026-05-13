@@ -563,7 +563,7 @@ export async function deleteSessionsAndRefresh(
     return [];
   }
   const confirmed = window.confirm(
-    `Delete ${keys.length} ${keys.length === 1 ? "session" : "sessions"}?\n\nThis will delete the session entries and archive their transcripts.`,
+    `Delete ${keys.length} ${keys.length === 1 ? "session" : "sessions"}?\n\nThis will delete the session entries and their transcript rows.`,
   );
   if (!confirmed) {
     return [];
@@ -573,7 +573,7 @@ export async function deleteSessionsAndRefresh(
   const refreshedDuringDelete = await withSessionsLoading(state, async () => {
     for (const key of keys) {
       try {
-        await client.request("sessions.delete", { key, deleteTranscript: true });
+        await client.request("sessions.delete", { key });
         deleted.push(key);
       } catch (err) {
         deleteErrors.push(String(err));

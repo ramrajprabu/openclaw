@@ -150,9 +150,9 @@ export const telegramBotDepsForTest: TelegramBotDeps = {
     ({
       channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
     }) as OpenClawConfig) as TelegramBotDeps["getRuntimeConfig"],
-  resolveStorePath: vi.fn(
-    (storePath?: string) => storePath ?? "/tmp/telegram-media-sessions.json",
-  ) as TelegramBotDeps["resolveStorePath"],
+  getSessionEntry: vi.fn(() => undefined) as TelegramBotDeps["getSessionEntry"],
+  listSessionEntries: vi.fn(() => []) as TelegramBotDeps["listSessionEntries"],
+  patchSessionEntry: vi.fn(async () => null) as TelegramBotDeps["patchSessionEntry"],
   readChannelAllowFromStore: vi.fn(async () => []) as TelegramBotDeps["readChannelAllowFromStore"],
   upsertChannelPairingRequest: vi.fn(async () => ({
     code: "PAIRCODE",
@@ -226,7 +226,6 @@ vi.doMock("./bot-message-context.session.runtime.js", async () => {
   return {
     ...actual,
     readSessionUpdatedAt: () => undefined,
-    resolveStorePath: (storePath?: string) => storePath ?? "/tmp/sessions.json",
   };
 });
 

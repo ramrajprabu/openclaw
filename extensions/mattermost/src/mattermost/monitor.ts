@@ -1209,7 +1209,6 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           cfg,
           route: modelSessionRoute,
           data,
-          skipCache: true,
         });
         const view = renderMattermostModelsPickerView({
           ownerUserId: pickerState.ownerUserId,
@@ -1584,10 +1583,6 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
               })
             : null;
 
-        const storePath = core.channel.session.resolveStorePath(cfg.session?.store, {
-          agentId: route.agentId,
-        });
-
         const previewLine = bodyText.slice(0, 200).replace(/\n/g, "\\n");
         logVerboseMessage(
           `mattermost inbound: from=${ctxPayload.From} len=${bodyText.length} preview="${previewLine}"`,
@@ -1767,8 +1762,8 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
               resolveTurn: () => ({
                 channel: "mattermost",
                 accountId: route.accountId,
+                agentId: route.agentId,
                 routeSessionKey: route.sessionKey,
-                storePath,
                 ctxPayload,
                 recordInboundSession: core.channel.session.recordInboundSession,
                 record: {

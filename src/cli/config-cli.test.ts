@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Command } from "commander";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConfigFileSnapshot, OpenClawConfig } from "../config/types.js";
 import type { PluginManifestRecord, PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
@@ -24,6 +24,13 @@ const mockWriteConfigFile = vi.fn<
 const mockResolveSecretRefValue = vi.fn();
 const mockReadBestEffortRuntimeConfigSchema = vi.fn();
 const mockLoadPluginMetadataSnapshot = vi.fn((_config: unknown) => createPluginMetadataSnapshot());
+
+function sourceBundledPluginTestEnv(): Record<string, string> {
+  return {
+    OPENCLAW_BUNDLED_PLUGINS_DIR: path.resolve("extensions"),
+    OPENCLAW_TEST_TRUST_BUNDLED_PLUGINS_DIR: "1",
+  };
+}
 
 vi.mock("../config/config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/config.js")>();
@@ -334,6 +341,9 @@ describe("config cli", () => {
   });
 
   beforeEach(() => {
+    for (const [key, value] of Object.entries(sourceBundledPluginTestEnv())) {
+      vi.stubEnv(key, value);
+    }
     vi.clearAllMocks();
     resetRuntimeCapture();
     mockLoadPluginMetadataSnapshot.mockReturnValue(createPluginMetadataSnapshot());
@@ -372,6 +382,10 @@ describe("config cli", () => {
       throw new Error(`__exit__:${code} - ${errorMessages}`);
     });
     mockResolveSecretRefValue.mockResolvedValue("resolved-secret");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe("config set - issue #6070", () => {

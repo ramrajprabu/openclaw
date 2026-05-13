@@ -125,6 +125,22 @@ function resolveConfiguredProviderContextTokens(
   return undefined;
 }
 
+function classifySessionKey(key: string, entry?: SessionEntry) {
+  if (key === "global") {
+    return "global";
+  }
+  if (key === "unknown") {
+    return "unknown";
+  }
+  if (isCronSessionKey(key)) {
+    return "cron";
+  }
+  if (entry?.chatType === "group" || entry?.chatType === "channel") {
+    return "group";
+  }
+  return "direct";
+}
+
 function resolveSessionModelRef(
   cfg: OpenClawConfig,
   entry?:

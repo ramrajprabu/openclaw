@@ -1,4 +1,4 @@
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult } from "openclaw/plugin-sdk/agent-core";
 import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-harness";
 import {
   HEARTBEAT_RESPONSE_TOOL_NAME,
@@ -30,7 +30,7 @@ function createTool(overrides: Partial<AnyAgentTool>): AnyAgentTool {
   } as unknown as AnyAgentTool;
 }
 
-function mediaResult(mediaUrl: string, audioAsVoice?: boolean): AgentToolResult<unknown> {
+function mediaResult(mediaUrl: string, audioAsVoice?: boolean): AgentToolResult {
   return {
     content: [{ type: "text", text: "Generated media reply." }],
     details: {
@@ -42,14 +42,14 @@ function mediaResult(mediaUrl: string, audioAsVoice?: boolean): AgentToolResult<
   };
 }
 
-function textToolResult(text: string, details: unknown = {}): AgentToolResult<unknown> {
+function textToolResult(text: string, details: unknown = {}): AgentToolResult {
   return {
     content: [{ type: "text", text }],
     details,
   };
 }
 
-function createBridgeWithToolResult(toolName: string, toolResult: AgentToolResult<unknown>) {
+function createBridgeWithToolResult(toolName: string, toolResult: AgentToolResult) {
   return createCodexDynamicToolBridge({
     tools: [
       createTool({
@@ -120,7 +120,7 @@ function expectContextFields(context: unknown, fields: Record<string, unknown>) 
   }
 }
 
-function expectToolResult(value: unknown, expected: AgentToolResult<unknown>) {
+function expectToolResult(value: unknown, expected: AgentToolResult) {
   const result = requireRecord(value, "tool result");
   expect(result.content).toEqual(expected.content);
   expect(result.details).toEqual(expected.details);
@@ -255,7 +255,7 @@ describe("createCodexDynamicToolBridge", () => {
           audioAsVoice: true,
         },
       },
-    } satisfies AgentToolResult<unknown>;
+    } satisfies AgentToolResult;
     const tool = createTool({
       execute: vi.fn(async () => toolResult),
     });
@@ -285,7 +285,7 @@ describe("createCodexDynamicToolBridge", () => {
     const toolResult = {
       content: [{ type: "text", text: "Sent." }],
       details: { messageId: "message-1" },
-    } satisfies AgentToolResult<unknown>;
+    } satisfies AgentToolResult;
     const tool = createTool({
       name: "message",
       execute: vi.fn(async () => toolResult),
@@ -414,14 +414,12 @@ describe("createCodexDynamicToolBridge", () => {
 
   it("applies agent tool result middleware from the active plugin registry", async () => {
     const registry = createEmptyPluginRegistry();
-    const handler = vi.fn(
-      async (event: { result: AgentToolResult<unknown>; toolName: string }) => ({
-        result: {
-          ...event.result,
-          content: [{ type: "text" as const, text: `${event.toolName} compacted` }],
-        },
-      }),
-    );
+    const handler = vi.fn(async (event: { result: AgentToolResult; toolName: string }) => ({
+      result: {
+        ...event.result,
+        content: [{ type: "text" as const, text: `${event.toolName} compacted` }],
+      },
+    }));
     registry.agentToolResultMiddlewares.push({
       pluginId: "tokenjuice",
       pluginName: "Tokenjuice",
@@ -494,7 +492,7 @@ describe("createCodexDynamicToolBridge", () => {
 
   it("uses raw tool provenance for media trust after middleware rewrites details", async () => {
     const registry = createEmptyPluginRegistry();
-    const handler = vi.fn(async (event: { result: AgentToolResult<unknown> }) => ({
+    const handler = vi.fn(async (event: { result: AgentToolResult }) => ({
       result: {
         ...event.result,
         content: [{ type: "text" as const, text: "Generated media reply." }],
@@ -541,7 +539,7 @@ describe("createCodexDynamicToolBridge", () => {
     const factory = async (codex: {
       on: (
         event: "tool_result",
-        handler: (event: any) => Promise<{ result: AgentToolResult<unknown> }>,
+        handler: (event: any) => Promise<{ result: AgentToolResult }>,
       ) => void;
     }) => {
       codex.on("tool_result", async (event) => ({
@@ -578,7 +576,7 @@ describe("createCodexDynamicToolBridge", () => {
   });
 
   it("keeps config out of Codex tool-result contexts", async () => {
-    const config = { session: { store: "/tmp/openclaw-session-store.json" } };
+    const config = { session: {} };
     const registry = createEmptyPluginRegistry();
     const middlewareContexts: Record<string, unknown>[] = [];
     const legacyContexts: Record<string, unknown>[] = [];
@@ -592,7 +590,7 @@ describe("createCodexDynamicToolBridge", () => {
         handler: (
           event: unknown,
           ctx: Record<string, unknown>,
-        ) => Promise<{ result: AgentToolResult<unknown> } | void>,
+        ) => Promise<{ result: AgentToolResult } | void>,
       ) => void;
     }) => {
       codex.on("tool_result", async (_event, ctx) => {
@@ -847,7 +845,7 @@ describe("createCodexDynamicToolBridge", () => {
     );
     const registry = createEmptyPluginRegistry();
     const handler = vi.fn(
-      async (event: { args: Record<string, unknown>; result: AgentToolResult<unknown> }) => {
+      async (event: { args: Record<string, unknown>; result: AgentToolResult }) => {
         events.push("middleware");
         expect(event.args).toEqual({ command: "status" });
         return {
@@ -944,10 +942,10 @@ describe("createCodexDynamicToolBridge", () => {
 
   it("passes per-call abort signals into dynamic tool execution", async () => {
     let capturedSignal: AbortSignal | undefined;
-    let resolveTool: ((result: AgentToolResult<unknown>) => void) | undefined;
+    let resolveTool: ((result: AgentToolResult) => void) | undefined;
     const execute = vi.fn(
       async (_callId: string, _args: Record<string, unknown>, signal: AbortSignal) =>
-        await new Promise<AgentToolResult<unknown>>((resolve) => {
+        await new Promise<AgentToolResult>((resolve) => {
           capturedSignal = signal;
           resolveTool = resolve;
         }),

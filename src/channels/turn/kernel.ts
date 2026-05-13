@@ -248,7 +248,7 @@ export async function dispatchAssembledChannelTurn(
       channel: params.channel,
       accountId: params.accountId,
       routeSessionKey: params.routeSessionKey,
-      storePath: params.storePath,
+      agentId: params.agentId,
       ctxPayload: params.ctxPayload,
       recordInboundSession: params.recordInboundSession,
       record: params.record,
@@ -346,7 +346,7 @@ async function runPreparedChannelTurnCore<
   });
   try {
     await params.recordInboundSession({
-      storePath: params.storePath,
+      agentId: params.agentId,
       sessionKey: params.ctxPayload.SessionKey ?? params.routeSessionKey,
       ctx: params.ctxPayload,
       groupResolution: params.record?.groupResolution,

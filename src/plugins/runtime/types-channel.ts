@@ -119,7 +119,6 @@ export type PluginRuntimeChannel = {
     get: typeof import("../../infra/channel-activity.js").getChannelActivity;
   };
   session: {
-    resolveStorePath: typeof import("../../config/sessions/paths.js").resolveStorePath;
     readSessionUpdatedAt: ReadSessionUpdatedAt;
     recordSessionMetaFromInbound: RecordSessionMetaFromInbound;
     recordInboundSession: RecordInboundSession;

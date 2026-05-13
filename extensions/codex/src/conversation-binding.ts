@@ -63,7 +63,8 @@ type ResumeCodexCliSessionOnNodeFn = (
 type CodexConversationStartParams = {
   pluginConfig?: unknown;
   config?: Parameters<typeof resolveCodexAppServerAuthProfileIdForAgent>[0]["config"];
-  sessionFile: string;
+  sessionKey?: string;
+  sessionId: string;
   workspaceDir?: string;
   threadId?: string;
   model?: string;
@@ -97,7 +98,8 @@ export async function startCodexConversationThread(
 ): Promise<CodexAppServerConversationBindingData> {
   const workspaceDir =
     params.workspaceDir?.trim() || resolveCodexDefaultWorkspaceDir(params.pluginConfig);
-  const existingBinding = await readCodexAppServerBinding(params.sessionFile, {
+  const bindingIdentity = resolveCodexConversationBindingIdentity(params);
+  const existingBinding = await readCodexAppServerBinding(bindingIdentity, {
     config: params.config,
   });
   const authProfileId = resolveCodexAppServerAuthProfileIdForAgent({
@@ -107,7 +109,8 @@ export async function startCodexConversationThread(
   if (params.threadId?.trim()) {
     await attachExistingThread({
       pluginConfig: params.pluginConfig,
-      sessionFile: params.sessionFile,
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
       threadId: params.threadId.trim(),
       workspaceDir,
       model: params.model,
@@ -121,7 +124,8 @@ export async function startCodexConversationThread(
   } else {
     await createThread({
       pluginConfig: params.pluginConfig,
-      sessionFile: params.sessionFile,
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
       workspaceDir,
       model: params.model,
       modelProvider: params.modelProvider,
@@ -133,7 +137,8 @@ export async function startCodexConversationThread(
     });
   }
   return createCodexConversationBindingData({
-    sessionFile: params.sessionFile,
+    sessionKey: params.sessionKey,
+    sessionId: params.sessionId,
     workspaceDir,
   });
 }
@@ -186,7 +191,7 @@ export async function handleCodexConversationInboundClaim(
     }
   }
   try {
-    const result = await enqueueBoundTurn(data.sessionFile, () =>
+    const result = await enqueueBoundTurn(resolveCodexConversationBindingQueueKey(data), () =>
       runBoundTurnWithMissingThreadRecovery({
         data,
         prompt,
@@ -216,12 +221,13 @@ export async function handleCodexConversationBindingResolved(
   if (!data || data.kind !== "codex-app-server-session") {
     return;
   }
-  await clearCodexAppServerBinding(data.sessionFile);
+  await clearCodexAppServerBinding(data);
 }
 
 async function attachExistingThread(params: {
   pluginConfig?: unknown;
-  sessionFile: string;
+  sessionKey?: string;
+  sessionId: string;
   threadId: string;
   workspaceDir: string;
   model?: string;
@@ -265,8 +271,10 @@ async function attachExistingThread(params: {
   const runtimeApprovalPolicy =
     typeof runtime.approvalPolicy === "string" ? runtime.approvalPolicy : undefined;
   await writeCodexAppServerBinding(
-    params.sessionFile,
+    resolveCodexConversationBindingIdentity(params),
     {
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
       threadId: thread.id,
       cwd: thread.cwd ?? params.workspaceDir,
       authProfileId: params.authProfileId,
@@ -288,7 +296,8 @@ async function attachExistingThread(params: {
 
 async function createThread(params: {
   pluginConfig?: unknown;
-  sessionFile: string;
+  sessionKey?: string;
+  sessionId: string;
   workspaceDir: string;
   model?: string;
   modelProvider?: string;
@@ -333,8 +342,10 @@ async function createThread(params: {
   const runtimeApprovalPolicy =
     typeof runtime.approvalPolicy === "string" ? runtime.approvalPolicy : undefined;
   await writeCodexAppServerBinding(
-    params.sessionFile,
+    resolveCodexConversationBindingIdentity(params),
     {
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
       threadId: response.thread.id,
       cwd: response.thread.cwd ?? params.workspaceDir,
       authProfileId: params.authProfileId,
@@ -364,7 +375,7 @@ async function runBoundTurn(params: {
   const runtime = resolveCodexAppServerRuntimeOptions({
     pluginConfig: params.pluginConfig,
   });
-  const binding = await readCodexAppServerBinding(params.data.sessionFile);
+  const binding = await readCodexAppServerBinding(params.data);
   const threadId = binding?.threadId;
   if (!threadId) {
     throw new Error("bound Codex conversation has no thread binding");
@@ -440,7 +451,8 @@ async function runBoundTurn(params: {
     );
     const turnId = response.turn.id;
     const activeCleanup = trackCodexConversationActiveTurn({
-      sessionFile: params.data.sessionFile,
+      sessionKey: params.data.sessionKey,
+      sessionId: params.data.sessionId,
       threadId,
       turnId,
     });
@@ -475,10 +487,11 @@ async function runBoundTurnWithMissingThreadRecovery(params: {
     if (!isCodexThreadNotFoundError(error)) {
       throw error;
     }
-    const binding = await readCodexAppServerBinding(params.data.sessionFile);
+    const binding = await readCodexAppServerBinding(params.data);
     await startCodexConversationThread({
       pluginConfig: params.pluginConfig,
-      sessionFile: params.data.sessionFile,
+      sessionKey: params.data.sessionKey,
+      sessionId: params.data.sessionId,
       workspaceDir: binding?.cwd || params.data.workspaceDir,
       model: binding?.model,
       modelProvider: binding?.modelProvider,
@@ -512,6 +525,20 @@ function enqueueBoundTurn<T>(key: string, run: () => Promise<T>): Promise<T> {
     })
     .catch(() => undefined);
   return next;
+}
+
+function resolveCodexConversationBindingIdentity(params: {
+  sessionKey?: string;
+  sessionId?: string;
+}): { sessionKey?: string; sessionId?: string } {
+  return {
+    sessionKey: params.sessionKey,
+    sessionId: params.sessionId,
+  };
+}
+
+function resolveCodexConversationBindingQueueKey(data: CodexConversationBindingData): string {
+  return data.sessionKey?.trim() || data.sessionId;
 }
 
 function resolveThreadRequestModelProvider(params: {

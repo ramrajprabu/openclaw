@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   loadAuthProfileStoreForSecretsRuntime,
+  replaceRuntimeAuthProfileStoreSnapshots,
 } from "openclaw/plugin-sdk/agent-runtime";
 import { upsertAuthProfile } from "openclaw/plugin-sdk/provider-auth";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -914,14 +915,20 @@ describe("bridgeCodexAppServerStartOptions", () => {
     const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
     const request = vi.fn(async () => ({ type: "chatgptAuthTokens" }));
     try {
-      upsertAuthProfile({
-        agentDir,
-        profileId: "openai-codex:aws",
-        credential: {
-          type: "aws-sdk",
-          provider: "openai-codex",
-        } as never,
-      });
+      replaceRuntimeAuthProfileStoreSnapshots([
+        {
+          agentDir,
+          store: {
+            version: 1,
+            profiles: {
+              "openai-codex:aws": {
+                type: "aws-sdk",
+                provider: "openai-codex",
+              } as never,
+            },
+          },
+        },
+      ]);
 
       await expect(
         applyCodexAppServerAuthProfile({
@@ -1199,65 +1206,10 @@ describe("bridgeCodexAppServerStartOptions", () => {
     }
   });
 
-  it("does not persist an expired stale credential before forced token refresh succeeds", async () => {
-    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
-    const currentExpiry = Date.now() + 60_000;
-    oauthMocks.refreshOpenAICodexToken.mockImplementationOnce(async () => {
-      const persistedProfile = expectOAuthProfile(
-        loadAuthProfileStoreForSecretsRuntime(agentDir).profiles["openai-codex:work"],
-      );
-      expect(persistedProfile).toMatchObject({
-        access: "current-access-token",
-        expires: currentExpiry,
-      });
-      return {
-        access: "refreshed-access-token",
-        refresh: "refreshed-refresh-token",
-        expires: Date.now() + 60_000,
-        accountId: "account-789",
-      };
-    });
-    try {
-      upsertAuthProfile({
-        agentDir,
-        profileId: "openai-codex:work",
-        credential: {
-          type: "oauth",
-          provider: "openai-codex",
-          access: "current-access-token",
-          refresh: "refresh-token",
-          expires: currentExpiry,
-          accountId: "account-123",
-          email: "codex@example.test",
-        },
-      });
-
-      await expect(
-        refreshCodexAppServerAuthTokens({
-          agentDir,
-          authProfileId: "openai-codex:work",
-        }),
-      ).resolves.toEqual({
-        accessToken: "refreshed-access-token",
-        chatgptAccountId: "account-789",
-        chatgptPlanType: null,
-      });
-      expect(oauthMocks.refreshOpenAICodexToken).toHaveBeenCalledWith("refresh-token");
-      const refreshedProfile = expectOAuthProfile(
-        loadAuthProfileStoreForSecretsRuntime(agentDir).profiles["openai-codex:work"],
-      );
-      expect(refreshedProfile?.access).toBe("refreshed-access-token");
-      expect(refreshedProfile?.refresh).toBe("refreshed-refresh-token");
-    } finally {
-      await fs.rm(agentDir, { recursive: true, force: true });
-    }
-  });
-
-  it("refreshes inherited main Codex OAuth without cloning it into the child store", async () => {
+  it("refreshes inherited main Codex OAuth through the owner store", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
     const stateDir = path.join(root, "state");
     const childAgentDir = path.join(stateDir, "agents", "worker", "agent");
-    const childAuthPath = path.join(childAgentDir, "auth-profiles.json");
     vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
     vi.stubEnv("OPENCLAW_AGENT_DIR", "");
     oauthMocks.refreshOpenAICodexToken.mockResolvedValueOnce({
@@ -1292,7 +1244,6 @@ describe("bridgeCodexAppServerStartOptions", () => {
       });
 
       expect(oauthMocks.refreshOpenAICodexToken).toHaveBeenCalledWith("main-refresh-token");
-      await expectPathMissing(childAuthPath);
       const mainProfile = expectOAuthProfile(
         loadAuthProfileStoreForSecretsRuntime().profiles["openai-codex:work"],
       );
@@ -1308,7 +1259,6 @@ describe("bridgeCodexAppServerStartOptions", () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
     const stateDir = path.join(root, "state");
     const childAgentDir = path.join(stateDir, "agents", "worker", "agent");
-    const childAuthPath = path.join(childAgentDir, "auth-profiles.json");
     vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
     vi.stubEnv("OPENCLAW_AGENT_DIR", "");
     oauthMocks.refreshOpenAICodexToken.mockResolvedValueOnce({
@@ -1330,24 +1280,19 @@ describe("bridgeCodexAppServerStartOptions", () => {
           email: "main-codex@example.test",
         },
       });
-      await fs.mkdir(childAgentDir, { recursive: true });
-      await fs.writeFile(
-        childAuthPath,
-        JSON.stringify({
-          version: 1,
-          profiles: {
-            "openai-codex:work": {
-              type: "oauth",
-              provider: "openai-codex",
-              access: "child-stale-access-token",
-              refresh: "child-stale-refresh-token",
-              expires: Date.now() - 60_000,
-              accountId: "account-main",
-              email: "main-codex@example.test",
-            },
-          },
-        }),
-      );
+      upsertAuthProfile({
+        agentDir: childAgentDir,
+        profileId: "openai-codex:work",
+        credential: {
+          type: "oauth",
+          provider: "openai-codex",
+          access: "child-stale-access-token",
+          refresh: "child-stale-refresh-token",
+          expires: Date.now() - 60_000,
+          accountId: "account-main",
+          email: "main-codex@example.test",
+        },
+      });
 
       await expect(
         refreshCodexAppServerAuthTokens({
@@ -1370,8 +1315,8 @@ describe("bridgeCodexAppServerStartOptions", () => {
       const childProfile = expectOAuthProfile(
         loadAuthProfileStoreForSecretsRuntime(childAgentDir).profiles["openai-codex:work"],
       );
-      expect(childProfile?.access).toBe("child-stale-access-token");
-      expect(childProfile?.refresh).toBe("child-stale-refresh-token");
+      expect(childProfile?.access).toBe("main-refreshed-access-token");
+      expect(childProfile?.refresh).toBe("main-refreshed-refresh-token");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

@@ -2,8 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, type Mock } from "vitest";
-import { resolveSessionTranscriptPath } from "../config/sessions.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { replaceSqliteSessionTranscriptEvents } from "../config/sessions/transcript-store.sqlite.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { captureEnv } from "../test-utils/env.js";
 import {
@@ -54,21 +53,6 @@ async function emitLifecycleAssistantReply(params: {
   };
   const sessionId = commandParams.sessionId ?? params.defaultSessionId;
   const runId = commandParams.runId ?? sessionId;
-  let sessionFile = resolveSessionTranscriptPath(sessionId);
-  if (testState.sessionStorePath && commandParams.sessionKey) {
-    const rawStore = JSON.parse(await fs.readFile(testState.sessionStorePath, "utf-8")) as Record<
-      string,
-      {
-        sessionId?: string;
-        sessionFile?: string;
-      }
-    >;
-    const entry = rawStore[commandParams.sessionKey];
-    if (entry?.sessionId === sessionId && entry.sessionFile) {
-      sessionFile = entry.sessionFile;
-    }
-  }
-  await fs.mkdir(path.dirname(sessionFile), { recursive: true });
 
   const startedAt = Date.now();
   emitAgentEvent({
@@ -83,7 +67,19 @@ async function emitLifecycleAssistantReply(params: {
     content: [{ type: "text", text }],
     ...(params.includeTimestamp ? { timestamp: Date.now() } : {}),
   };
-  await fs.appendFile(sessionFile, `${JSON.stringify({ message })}\n`, "utf8");
+  replaceSqliteSessionTranscriptEvents({
+    agentId: "main",
+    sessionId,
+    events: [
+      { type: "session", version: 1, id: sessionId },
+      {
+        type: "message",
+        id: `${runId}-assistant`,
+        parentId: null,
+        message,
+      },
+    ],
+  });
 
   emitAgentEvent({
     runId,
