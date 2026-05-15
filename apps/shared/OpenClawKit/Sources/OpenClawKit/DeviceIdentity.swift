@@ -40,6 +40,29 @@ enum DeviceIdentityPaths {
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".openclaw", isDirectory: true)
     }
+
+    static func legacyStateDirURL() -> URL {
+        #if DEBUG
+        if let testingStateDirURL {
+            return testingStateDirURL
+        }
+        #endif
+
+        for key in self.stateDirEnv {
+            if let raw = getenv(key) {
+                let value = String(cString: raw).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !value.isEmpty {
+                    return URL(fileURLWithPath: value, isDirectory: true)
+                }
+            }
+        }
+
+        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            return appSupport.appendingPathComponent("OpenClaw", isDirectory: true)
+        }
+
+        return self.stateDirURL()
+    }
 }
 
 public enum DeviceIdentityStore {
@@ -77,7 +100,7 @@ public enum DeviceIdentityStore {
     }
 
     private static func legacyIdentityURL() -> URL {
-        DeviceIdentityPaths.stateDirURL()
+        DeviceIdentityPaths.legacyStateDirURL()
             .appendingPathComponent("identity", isDirectory: true)
             .appendingPathComponent("device.json", isDirectory: false)
     }

@@ -420,7 +420,9 @@ async function downloadToBuffer(
               redirectUrl.origin === parsedUrl.origin
                 ? headers
                 : retainSafeHeadersForCrossOriginRedirect(headers);
-            resolve(downloadToBuffer(redirectUrl, redirectHeaders, maxRedirects - 1, maxBytes));
+            resolve(
+              downloadToBuffer(redirectUrl.toString(), redirectHeaders, maxRedirects - 1, maxBytes),
+            );
             return;
           }
           if (!res.statusCode || res.statusCode >= 400) {
@@ -815,6 +817,13 @@ export async function saveMediaStream(
       resolveFinalPath: (result) => path.join(dir, result.id),
     }),
   );
+  const buffer = await fs.readFile(saved.filePath);
+  upsertMediaBlob({
+    subdir: resolveMediaSubdir(subdir, "saveMediaStream"),
+    id: saved.result.id,
+    buffer,
+    contentType: saved.result.contentType,
+  });
   return buildSavedMediaResult({
     dir,
     id: saved.result.id,

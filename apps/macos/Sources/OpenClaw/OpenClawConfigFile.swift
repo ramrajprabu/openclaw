@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import OpenClawKit
 import OpenClawProtocol
 
 enum OpenClawConfigFile {
@@ -393,11 +394,17 @@ enum OpenClawConfigFile {
     }
 
     private static func readConfigHealthState() -> [String: Any] {
-        self.configHealthState
+        let persisted = OpenClawSQLiteStateStore.readConfigHealthState()
+        if !persisted.isEmpty {
+            self.configHealthState = persisted
+            return persisted
+        }
+        return self.configHealthState
     }
 
     private static func writeConfigHealthState(_ root: [String: Any]) {
         self.configHealthState = root
+        try? OpenClawSQLiteStateStore.writeConfigHealthState(root)
     }
 
     private static func configHealthEntry(state: [String: Any], configPath: String) -> [String: Any] {

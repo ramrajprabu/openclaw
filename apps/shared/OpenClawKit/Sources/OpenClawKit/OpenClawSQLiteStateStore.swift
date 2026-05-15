@@ -315,6 +315,60 @@ public enum OpenClawSQLiteStateStore {
         }
     }
 
+    public static func readConfigHealthState() -> [String: Any] {
+        do {
+            let db = try self.openStateDatabase()
+            defer { sqlite3_close(db) }
+            let sql = """
+                SELECT config_path, last_known_good_json, last_promoted_good_json, last_observed_suspicious_signature
+                FROM config_health_entries
+                ORDER BY config_path ASC
+                """
+            var statement: OpaquePointer?
+            try self.prepare(db, sql, &statement)
+            defer { sqlite3_finalize(statement) }
+            var entries: [String: Any] = [:]
+            while true {
+                let status = sqlite3_step(statement)
+                if status == SQLITE_DONE { break }
+                guard status == SQLITE_ROW, let configPath = self.columnString(statement, index: 0) else {
+                    throw self.sqliteError(db, context: "SQLite config health read failed")
+                }
+                var entry: [String: Any] = [:]
+                if let lastKnownGood = self.columnJSONDictionary(statement, index: 1) {
+                    entry["lastKnownGood"] = lastKnownGood
+                }
+                if let lastPromotedGood = self.columnJSONDictionary(statement, index: 2) {
+                    entry["lastPromotedGood"] = lastPromotedGood
+                }
+                if let signature = self.columnString(statement, index: 3) {
+                    entry["lastObservedSuspiciousSignature"] = signature
+                }
+                entries[configPath] = entry
+            }
+            return entries.isEmpty ? [:] : ["entries": entries]
+        } catch {
+            self.logger.warning("SQLite config health read failed: \(error.localizedDescription, privacy: .public)")
+            return [:]
+        }
+    }
+
+    public static func writeConfigHealthState(_ state: [String: Any]) throws {
+        let entries = state["entries"] as? [String: Any] ?? [:]
+        let updatedAtMs = Int(Date().timeIntervalSince1970 * 1000)
+        try self.withWriteTransaction { db in
+            try self.exec(db, "DELETE FROM config_health_entries")
+            for (configPath, rawEntry) in entries {
+                guard let entry = rawEntry as? [String: Any] else { continue }
+                try self.insertConfigHealthEntry(
+                    db,
+                    configPath: configPath,
+                    entry: entry,
+                    updatedAtMs: updatedAtMs)
+            }
+        }
+    }
+
     public static func readPortGuardianRecords() -> [OpenClawSQLitePortGuardianRecord] {
         do {
             let db = try self.openStateDatabase()
@@ -447,6 +501,17 @@ public enum OpenClawSQLiteStateStore {
         try self.exec(
             db,
             "CREATE INDEX IF NOT EXISTS idx_macos_port_guardian_records_port ON macos_port_guardian_records(port, timestamp DESC)")
+        try self.exec(
+            db,
+            """
+            CREATE TABLE IF NOT EXISTS config_health_entries (
+              config_path TEXT NOT NULL PRIMARY KEY,
+              last_known_good_json TEXT,
+              last_promoted_good_json TEXT,
+              last_observed_suspicious_signature TEXT,
+              updated_at_ms INTEGER NOT NULL
+            )
+            """)
     }
 
     private static func prepare(_ db: OpaquePointer?, _ sql: String, _ statement: inout OpaquePointer?) throws {
@@ -506,6 +571,50 @@ public enum OpenClawSQLiteStateStore {
     private static func columnString(_ statement: OpaquePointer?, index: Int32) -> String? {
         guard let raw = sqlite3_column_text(statement, index) else { return nil }
         return String(cString: UnsafeRawPointer(raw).assumingMemoryBound(to: CChar.self))
+    }
+
+    private static func columnJSONDictionary(_ statement: OpaquePointer?, index: Int32) -> [String: Any]? {
+        guard let raw = self.columnString(statement, index: index),
+              let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return object
+    }
+
+    private static func jsonString(_ value: Any?) -> String? {
+        guard let value, !(value is NSNull), JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func insertConfigHealthEntry(
+        _ db: OpaquePointer?,
+        configPath: String,
+        entry: [String: Any],
+        updatedAtMs: Int) throws
+    {
+        let sql = """
+            INSERT INTO config_health_entries (
+              config_path, last_known_good_json, last_promoted_good_json,
+              last_observed_suspicious_signature, updated_at_ms
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """
+        var statement: OpaquePointer?
+        try self.prepare(db, sql, &statement)
+        defer { sqlite3_finalize(statement) }
+        self.bindText(statement, index: 1, value: configPath)
+        self.bindNullableText(statement, index: 2, value: self.jsonString(entry["lastKnownGood"]))
+        self.bindNullableText(statement, index: 3, value: self.jsonString(entry["lastPromotedGood"]))
+        self.bindNullableText(
+            statement,
+            index: 4,
+            value: entry["lastObservedSuspiciousSignature"] as? String)
+        sqlite3_bind_int64(statement, 5, Int64(updatedAtMs))
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw self.sqliteError(db, context: "SQLite config health write failed")
+        }
     }
 
     private static func withWriteTransaction(_ body: (OpaquePointer?) throws -> Void) throws {

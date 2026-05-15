@@ -1,4 +1,4 @@
-import { normalizeStoreSessionKey } from "./store-entry.js";
+import { normalizeSessionRowKey } from "./store-entry.js";
 
 export type SessionMaintenancePreserveKeysProvider = () => Iterable<string> | undefined;
 
@@ -14,10 +14,10 @@ export function registerSessionMaintenancePreserveKeysProvider(
 }
 
 function addSessionMaintenancePreserveKey(keys: Set<string>, value: string | undefined): void {
-  // Match how store keys are normalized in `normalizeStoreSessionKey`
+  // Match how store keys are normalized in `normalizeSessionRowKey`
   // (trim + lowercase) so providers can register session keys in any
   // case without missing matches during maintenance lookups.
-  const normalized = normalizeStoreSessionKey(value ?? "");
+  const normalized = normalizeSessionRowKey(value ?? "");
   if (normalized) {
     keys.add(normalized);
   }

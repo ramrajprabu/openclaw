@@ -1,4 +1,4 @@
-import { hasOutboundReplyContent } from "openclaw/plugin-sdk/reply-payload";
+import type { SourceReplyDeliveryMode } from "../../../auto-reply/get-reply-options.types.js";
 import {
   createHeartbeatToolResponsePayload,
   type HeartbeatToolResponse,

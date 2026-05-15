@@ -9,7 +9,10 @@ import type { AuthProfileStore } from "../../auth-profiles/types.js";
 import type { ModelRegistry } from "../../model-registry-contract.js";
 import type { Api, AssistantMessage, Model } from "../../pi-ai-contract.js";
 import type { AuthStorage } from "../../pi-coding-agent-contract.js";
-import type { MessagingToolSend } from "../../pi-embedded-messaging.types.js";
+import type {
+  MessagingToolSend,
+  MessagingToolSourceReplyPayload,
+} from "../../pi-embedded-messaging.types.js";
 import type { ToolOutcomeObserver } from "../../pi-tools.before-tool-call.js";
 import type { AgentRuntimePlan } from "../../runtime-plan/types.js";
 import type { ToolErrorSummary } from "../../tool-error-summary.js";

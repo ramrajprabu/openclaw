@@ -30,6 +30,7 @@ import { shouldSuppressLocalExecApprovalPrompt } from "../../channels/plugins/ex
 import { applyMergePatch } from "../../config/merge-patch.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import { readSqliteSessionRoutingInfo } from "../../config/sessions/session-entries.sqlite.js";
+import { appendAssistantMessageToSessionTranscript } from "../../config/sessions/transcript.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";

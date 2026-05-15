@@ -37,9 +37,7 @@ import {
   getSessionEntry,
   getRuntimeConfig,
   formatEmbeddedPiQueueFailureSummary,
-  isSteeringQueueMode,
-  queueEmbeddedPiMessageWithOutcome,
-  resolvePiSteeringModeForQueueMode,
+  queueEmbeddedPiMessageWithOutcomeAsync,
   resolveActiveEmbeddedRunSessionId,
   resolveAgentIdFromSessionKey,
   resolveConversationIdFromTargets,
@@ -50,8 +48,7 @@ import {
   runSubagentAnnounceDispatch,
   type SubagentAnnounceDeliveryResult,
 } from "./subagent-announce-dispatch.js";
-import { resolveAnnounceOrigin, type DeliveryContext } from "./subagent-announce-origin.js";
-import { type AnnounceQueueItem, enqueueAnnounce } from "./subagent-announce-queue.js";
+import type { DeliveryContext } from "./subagent-announce-origin.js";
 import { getSubagentDepthFromSessionEntries } from "./subagent-depth.js";
 import { resolveRequesterStoreKey } from "./subagent-requester-store-key.js";
 import type { SpawnSubagentMode } from "./subagent-spawn.types.js";
@@ -61,6 +58,7 @@ const MAX_TIMER_SAFE_TIMEOUT_MS = 2_147_000_000;
 const AGENT_MEDIATED_COMPLETION_TOOLS = new Set(["music_generate", "video_generate"]);
 
 type SubagentAnnounceDeliveryDeps = {
+  callGateway: typeof callGateway;
   dispatchGatewayMethodInProcess: typeof dispatchGatewayMethodInProcess;
   getRuntimeConfig: typeof getRuntimeConfig;
   getRequesterSessionActivity: (requesterSessionKey: string) => {
@@ -75,6 +73,7 @@ type SubagentAnnounceDeliveryDeps = {
 };
 
 const defaultSubagentAnnounceDeliveryDeps: SubagentAnnounceDeliveryDeps = {
+  callGateway,
   dispatchGatewayMethodInProcess,
   getRuntimeConfig,
   getRequesterSessionActivity: (requesterSessionKey: string) => {
@@ -101,21 +100,6 @@ async function resolveQueueEmbeddedPiMessageOutcome(
     sessionId,
     text,
     options,
-  );
-}
-
-async function runAnnounceAgentCall(params: {
-  agentParams: Record<string, unknown>;
-  expectFinal?: boolean;
-  timeoutMs?: number;
-}): Promise<unknown> {
-  return await subagentAnnounceDeliveryDeps.dispatchGatewayMethodInProcess(
-    "agent",
-    params.agentParams,
-    {
-      expectFinal: params.expectFinal,
-      timeoutMs: params.timeoutMs,
-    },
   );
 }
 

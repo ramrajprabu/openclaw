@@ -10,7 +10,7 @@ import {
   resolveScopeOutsideRequestedRoles,
   roleScopesAllow,
 } from "../shared/operator-scope-compat.js";
-import { rejectPendingPairingRequest } from "./pairing-pending.js";
+import { revokeDeviceBootstrapTokensForDevice } from "./device-bootstrap.js";
 import {
   createAsyncLock,
   pruneExpiredPending,

@@ -4,8 +4,8 @@ import {
   createChannelMessageReplyPipeline,
   deliverInboundReplyWithMessageSendContext,
 } from "openclaw/plugin-sdk/channel-message";
-import { readChannelAllowFromStore } from "openclaw/plugin-sdk/conversation-runtime";
 import {
+  readChannelAllowFromStore,
   recordInboundSession,
   upsertChannelPairingRequest,
 } from "openclaw/plugin-sdk/conversation-runtime";
@@ -13,10 +13,12 @@ import { buildModelsProviderData } from "openclaw/plugin-sdk/models-provider-run
 import { dispatchReplyWithBufferedBlockDispatcher } from "openclaw/plugin-sdk/reply-dispatch-runtime";
 import { resolveInboundLastRouteSessionKey } from "openclaw/plugin-sdk/routing";
 import { getRuntimeConfig } from "openclaw/plugin-sdk/runtime-config-snapshot";
+import { resolvePinnedMainDmOwnerFromAllowlist } from "openclaw/plugin-sdk/security-runtime";
 import {
   getSessionEntry,
   listSessionEntries,
   patchSessionEntry,
+  readSessionUpdatedAt,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { listSkillCommandsForAgents } from "openclaw/plugin-sdk/skill-commands-runtime";
 import { enqueueSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
@@ -35,6 +37,12 @@ export type TelegramBotDeps = {
   patchSessionEntry: typeof patchSessionEntry;
   readChannelAllowFromStore: typeof readChannelAllowFromStore;
   upsertChannelPairingRequest: typeof upsertChannelPairingRequest;
+  recordChannelActivity?: typeof recordChannelActivity;
+  buildChannelTurnContext?: typeof buildChannelTurnContext;
+  readSessionUpdatedAt?: typeof readSessionUpdatedAt;
+  recordInboundSession?: typeof recordInboundSession;
+  resolveInboundLastRouteSessionKey?: typeof resolveInboundLastRouteSessionKey;
+  resolvePinnedMainDmOwnerFromAllowlist?: typeof resolvePinnedMainDmOwnerFromAllowlist;
   enqueueSystemEvent: typeof enqueueSystemEvent;
   dispatchReplyWithBufferedBlockDispatcher: typeof dispatchReplyWithBufferedBlockDispatcher;
   loadWebMedia?: typeof loadWebMedia;
@@ -69,6 +77,24 @@ export const defaultTelegramBotDeps: TelegramBotDeps = {
   },
   get upsertChannelPairingRequest() {
     return upsertChannelPairingRequest;
+  },
+  get recordChannelActivity() {
+    return recordChannelActivity;
+  },
+  get buildChannelTurnContext() {
+    return buildChannelTurnContext;
+  },
+  get readSessionUpdatedAt() {
+    return readSessionUpdatedAt;
+  },
+  get recordInboundSession() {
+    return recordInboundSession;
+  },
+  get resolveInboundLastRouteSessionKey() {
+    return resolveInboundLastRouteSessionKey;
+  },
+  get resolvePinnedMainDmOwnerFromAllowlist() {
+    return resolvePinnedMainDmOwnerFromAllowlist;
   },
   get enqueueSystemEvent() {
     return enqueueSystemEvent;

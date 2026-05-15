@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Agent } from "node:http";
 import process from "node:process";
+import { createAmbientNodeProxyAgent } from "@openclaw/proxyline";
 import { resolveDebugProxyCertDir } from "./paths.js";
 
 export const OPENCLAW_DEBUG_PROXY_ENABLED = "OPENCLAW_DEBUG_PROXY_ENABLED";

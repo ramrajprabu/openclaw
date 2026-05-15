@@ -496,6 +496,15 @@ async function describeConversationBinding(
   if (!current || !data) {
     return "No Codex conversation binding is attached.";
   }
+  if (data.kind === "codex-cli-node-session") {
+    return [
+      "Codex conversation binding:",
+      `- Runtime: ${formatCodexDisplayText("cli-node")}`,
+      `- Node: ${formatCodexDisplayText(data.nodeId)}`,
+      `- Session: ${formatCodexDisplayText(data.sessionId)}`,
+      `- Workspace: ${formatCodexDisplayText(data.cwd ?? "unknown")}`,
+    ].join("\n");
+  }
   const threadBinding = await deps.readCodexAppServerBinding(data);
   const active = deps.readCodexConversationActiveTurn(data);
   return [
@@ -745,7 +754,9 @@ async function resolveControlSessionIdentity(
   const binding = await ctx.getCurrentConversationBinding();
   const data = readCodexConversationBindingData(binding);
   if (data) {
-    return { sessionKey: data.sessionKey, sessionId: data.sessionId };
+    return data.kind === "codex-app-server-session"
+      ? { sessionKey: data.sessionKey, sessionId: data.sessionId }
+      : { sessionId: data.sessionId };
   }
   return resolveCodexCommandBindingIdentity(ctx);
 }

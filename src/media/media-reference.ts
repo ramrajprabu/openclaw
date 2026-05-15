@@ -87,15 +87,6 @@ function maybeLocalPathFromSource(source: string): string | null {
   return null;
 }
 
-function relativePathEscapesBase(relativePath: string): boolean {
-  return (
-    relativePath === ".." ||
-    relativePath.startsWith("../") ||
-    relativePath.startsWith("..\\") ||
-    path.isAbsolute(relativePath)
-  );
-}
-
 async function resolvePathForContainment(candidate: string): Promise<string> {
   try {
     return await fs.realpath(candidate);

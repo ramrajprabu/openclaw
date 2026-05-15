@@ -6,7 +6,7 @@ import { normalizeProviderId } from "../agents/provider-id.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.js";
-import { classifySessionKind } from "../sessions/classify-session-kind.js";
+import { isCronSessionKey } from "../sessions/session-key-utils.js";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -220,7 +220,7 @@ function resolveContextTokensForModel(params: {
 
 export const statusSummaryRuntime = {
   resolveContextTokensForModel,
-  classifySessionKey: classifySessionKind,
+  classifySessionKey,
   resolveSessionModelRef,
   resolveSessionRuntimeLabel,
   resolveConfiguredStatusModelRef,

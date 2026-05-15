@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { formatErrorMessage } from "../infra/errors.js";
-import { withFileLock } from "../infra/file-lock.js";
 import { replaceFileAtomic } from "../infra/replace-file.js";
 import { isPathInside } from "../security/scan-paths.js";
 import { isRecord } from "../utils.js";
@@ -36,17 +35,6 @@ import type { ConfigFileSnapshot, OpenClawConfig } from "./types.js";
 import { validateConfigObjectWithPlugins } from "./validation.js";
 
 export type ConfigMutationBase = "runtime" | "source";
-
-const CONFIG_MUTATION_LOCK_OPTIONS = {
-  retries: {
-    retries: 80,
-    factor: 1.2,
-    minTimeout: 25,
-    maxTimeout: 250,
-    randomize: true,
-  },
-  stale: 30_000,
-} as const;
 
 const DEFAULT_CONFIG_MUTATION_RETRY_ATTEMPTS = 5;
 const activeConfigMutationLocks = new AsyncLocalStorage<Set<string>>();
@@ -169,10 +157,7 @@ async function withConfigMutationLock<T>(
   try {
     const nextActiveLocks = new Set(activeLocks ?? []);
     nextActiveLocks.add(configPath);
-    return await activeConfigMutationLocks.run(
-      nextActiveLocks,
-      async () => await withFileLock(configPath, CONFIG_MUTATION_LOCK_OPTIONS, fn),
-    );
+    return await activeConfigMutationLocks.run(nextActiveLocks, fn);
   } finally {
     releaseQueueSlot();
     if (configMutationQueueTails.get(configPath) === currentTail) {

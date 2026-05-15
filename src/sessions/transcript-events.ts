@@ -28,6 +28,7 @@ export function emitSessionTranscriptUpdate(update: SessionTranscriptUpdate): vo
     sessionKey: update.sessionKey,
     message: update.message,
     messageId: update.messageId,
+    messageSeq: update.messageSeq,
   };
   const agentId = normalizeOptionalString(normalized.agentId);
   const sessionId = normalizeOptionalString(normalized.sessionId);

@@ -36,6 +36,7 @@ import {
   readCodexConversationBindingDataRecord,
   resolveCodexDefaultWorkspaceDir,
   type CodexAppServerConversationBindingData,
+  type CodexConversationBindingData,
 } from "./conversation-binding-data.js";
 import { trackCodexConversationActiveTurn } from "./conversation-control.js";
 import { createCodexConversationTurnCollector } from "./conversation-turn-collector.js";
@@ -538,7 +539,9 @@ function resolveCodexConversationBindingIdentity(params: {
 }
 
 function resolveCodexConversationBindingQueueKey(data: CodexConversationBindingData): string {
-  return data.sessionKey?.trim() || data.sessionId;
+  return data.kind === "codex-app-server-session"
+    ? data.sessionKey?.trim() || data.sessionId
+    : data.sessionId;
 }
 
 function resolveThreadRequestModelProvider(params: {

@@ -28,6 +28,15 @@ function getOfficialCatalogFileCache(): Map<string, ChannelCatalogEntryLike[] | 
   return globals[globalKey];
 }
 
+function getBundledPackageCatalogCache(): Map<string, ChannelCatalogEntryLike[] | null> {
+  const globalKey = "__openclawBundledPackageCatalogCache";
+  const globals = globalThis as typeof globalThis & {
+    [globalKey]?: Map<string, ChannelCatalogEntryLike[] | null>;
+  };
+  globals[globalKey] ??= new Map<string, ChannelCatalogEntryLike[] | null>();
+  return globals[globalKey];
+}
+
 function listPackageRoots(): string[] {
   return [
     resolveOpenClawPackageRootSync({ cwd: process.cwd() }),
@@ -40,6 +49,7 @@ function readBundledExtensionCatalogEntriesSync(): ChannelCatalogEntryLike[] {
   if (!pluginsDir) {
     return [];
   }
+  const bundledPackageCatalogCache = getBundledPackageCatalogCache();
   const cached = bundledPackageCatalogCache.get(pluginsDir);
   if (cached !== undefined) {
     return cached ?? [];

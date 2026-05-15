@@ -9,8 +9,8 @@ import { info } from "../globals.js";
 import { writeTextAtomic } from "../infra/json-files.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { type RuntimeEnv, writeRuntimeJson } from "../runtime.js";
-import { classifySessionKind, type SessionKind } from "../sessions/classify-session-kind.js";
-import { isAcpSessionKey } from "../sessions/session-key-utils.js";
+import type { SessionKind } from "../sessions/classify-session-kind.js";
+import { isAcpSessionKey, isCronSessionKey } from "../sessions/session-key-utils.js";
 import { createLazyImportLoader } from "../shared/lazy-promise.js";
 import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
 import { resolveAgentRuntimeLabel } from "../status/agent-runtime-label.js";
@@ -362,6 +362,7 @@ export async function sessionsCommand(
       .map(({ sessionKey: key, entry }) => {
         const row = toSessionDisplayRow(key, entry);
         const agentId = parseAgentSessionKey(row.key)?.agentId ?? target.agentId;
+        const acpRuntime = entry?.acp != null;
         const modelRef = resolveSessionDisplayModelRef(cfg, { ...row, agentId });
         const agentRuntime = resolveModelAgentRuntimeMetadata({
           cfg,

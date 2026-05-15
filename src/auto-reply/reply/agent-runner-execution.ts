@@ -96,10 +96,6 @@ const GPT_CHAT_BREVITY_ACK_MAX_SENTENCES = 3;
 const GPT_CHAT_BREVITY_SOFT_MAX_CHARS = 900;
 const GPT_CHAT_BREVITY_SOFT_MAX_SENTENCES = 6;
 
-function shouldBridgeCliAssistantTextToReasoning(provider: string): boolean {
-  return normalizeLowercaseStringOrEmpty(provider) === "claude-cli";
-}
-
 function readApprovalScopeValue(value: unknown): "turn" | "session" | undefined {
   return value === "turn" || value === "session" ? value : undefined;
 }

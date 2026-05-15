@@ -33,6 +33,12 @@ export type CodexAppServerAuthProfileLookup = {
   config?: ProviderAuthAliasConfig;
 };
 
+export type CodexAppServerContextEngineBinding = {
+  schemaVersion: 1;
+  engineId: string;
+  policyFingerprint: string;
+};
+
 export type CodexAppServerThreadBinding = {
   schemaVersion: 1;
   threadId: string;
@@ -133,6 +139,12 @@ function normalizeCodexAppServerBinding(
       typeof parsed.dynamicToolsFingerprint === "string"
         ? parsed.dynamicToolsFingerprint
         : undefined,
+    userMcpServersFingerprint:
+      typeof parsed.userMcpServersFingerprint === "string"
+        ? parsed.userMcpServersFingerprint
+        : undefined,
+    mcpServersFingerprint:
+      typeof parsed.mcpServersFingerprint === "string" ? parsed.mcpServersFingerprint : undefined,
     pluginAppsFingerprint:
       typeof parsed.pluginAppsFingerprint === "string" ? parsed.pluginAppsFingerprint : undefined,
     pluginAppsInputFingerprint:
@@ -140,6 +152,7 @@ function normalizeCodexAppServerBinding(
         ? parsed.pluginAppsInputFingerprint
         : undefined,
     pluginAppPolicyContext: readPluginAppPolicyContext(parsed.pluginAppPolicyContext),
+    contextEngine: readContextEngineBinding(parsed.contextEngine),
     createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : new Date().toISOString(),
     updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
   };

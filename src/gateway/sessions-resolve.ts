@@ -63,8 +63,7 @@ function isResolvedSessionKeyVisible(params: {
   if (typeof params.p.spawnedBy !== "string" || params.p.spawnedBy.trim().length === 0) {
     return true;
   }
-  return listSessionsFromStore({
-    cfg: params.cfg,
+  return filterAndSortSessionEntries({
     store: params.store,
     now: Date.now(),
     opts: resolveSessionVisibilityFilterOptions(params.p),

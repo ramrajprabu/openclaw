@@ -107,7 +107,7 @@ function getAgentTranscriptKysely(db: import("node:sqlite").DatabaseSync) {
 function openTranscriptAgentDatabase(
   options: SqliteSessionTranscriptStoreOptions,
 ): OpenClawAgentDatabase {
-  return openOpenClawAgentDatabase({ env: options.env, agentId: options.agentId });
+  return openOpenClawAgentDatabase(options);
 }
 
 function readNextTranscriptSeq(database: OpenClawAgentDatabase, sessionId: string): number {

@@ -7,6 +7,7 @@ import {
   executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
 } from "../infra/kysely-sync.js";
+import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { readSqliteNumberPragma } from "../infra/sqlite-pragma.test-support.js";
 import type { DB as OpenClawAgentKyselyDatabase } from "./openclaw-agent-db.generated.js";
 import {
@@ -126,6 +127,29 @@ describe("openclaw agent database", () => {
       schema_version: 1,
       agent_id: "worker-1",
     });
+  });
+
+  it("refuses to open newer per-agent schema versions", () => {
+    const stateDir = createTempStateDir();
+    const databasePath = path.join(
+      stateDir,
+      "agents",
+      "worker-1",
+      "agent",
+      "openclaw-agent.sqlite",
+    );
+    fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(databasePath);
+    db.exec("PRAGMA user_version = 2;");
+    db.close();
+
+    expect(() =>
+      openOpenClawAgentDatabase({
+        agentId: "worker-1",
+        env: { OPENCLAW_STATE_DIR: stateDir },
+      }),
+    ).toThrow(/newer schema version 2/);
   });
 
   it("enforces one canonical session route per session key", () => {

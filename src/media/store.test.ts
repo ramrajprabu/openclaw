@@ -348,6 +348,24 @@ describe("media store", () => {
       },
     },
     {
+      name: "persists streamed media bytes in SQLite",
+      run: async () => {
+        await withTempStore(async (store) => {
+          const saved = await store.saveMediaStream(
+            Readable.from([Buffer.from("stream bytes")]),
+            "text/plain",
+            "inbound",
+          );
+          await fs.rm(saved.path, { force: true });
+
+          const read = await store.readMediaBuffer(saved.id, "inbound");
+
+          expect(read.buffer.toString("utf8")).toBe("stream bytes");
+          await expect(fs.readFile(read.path, "utf8")).resolves.toBe("stream bytes");
+        });
+      },
+    },
+    {
       name: "rejects oversized media ID reads before materializing the file",
       run: async () => {
         await withTempStore(async (store) => {

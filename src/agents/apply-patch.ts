@@ -15,6 +15,7 @@ import {
 } from "./path-policy.js";
 import { assertSandboxPath } from "./sandbox-paths.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
+import { relativePathEscapesContainerRoot as relativePathEscapesRoot } from "./sandbox/path-utils.js";
 
 const BEGIN_PATCH_MARKER = "*** Begin Patch";
 const END_PATCH_MARKER = "*** End Patch";

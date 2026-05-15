@@ -16,7 +16,8 @@ import {
   type AcpRuntimeStatus,
 } from "acpx/runtime";
 import { createPluginStateKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
-import { AcpRuntimeError, type AcpRuntime } from "../runtime-api.js";
+import { redactSensitiveText } from "openclaw/plugin-sdk/security-runtime";
+import { AcpRuntimeError, type AcpRuntime, type AcpRuntimeErrorCode } from "../runtime-api.js";
 import {
   createAcpxProcessLeaseId,
   hashAcpxProcessCommand,

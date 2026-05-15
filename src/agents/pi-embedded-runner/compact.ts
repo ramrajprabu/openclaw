@@ -65,6 +65,7 @@ import {
 import { isFallbackSummaryError, runWithModelFallback } from "../model-fallback.js";
 import { supportsModelTools } from "../model-tool-support.js";
 import { ensureOpenClawModelCatalog } from "../models-config.js";
+import { resolveContextConfigProviderForRuntime } from "../openai-codex-routing.js";
 import { createBundleLspToolRuntime } from "../pi-bundle-lsp-runtime.js";
 import { createBundleMcpToolRuntime } from "../pi-bundle-mcp-tools.js";
 import {

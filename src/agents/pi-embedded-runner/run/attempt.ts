@@ -1128,8 +1128,11 @@ export async function runEmbeddedAttempt(
       warn: (message) => log.warn(message),
     });
     let completedBootstrapTurn: boolean | undefined;
-    const hasCompletedBootstrapTurnForAttempt = async (sessionFile: string) => {
-      completedBootstrapTurn ??= await hasCompletedBootstrapTurn(sessionFile);
+    const hasCompletedBootstrapTurnForAttempt = async () => {
+      completedBootstrapTurn ??= await hasCompletedBootstrapSessionTurn({
+        agentId: sessionAgentId,
+        sessionId: params.sessionId,
+      });
       return completedBootstrapTurn;
     };
     const resolveBootstrapRouting = (bootstrapFiles?: readonly WorkspaceBootstrapFile[]) =>
@@ -1149,7 +1152,7 @@ export async function runEmbeddedAttempt(
       !isRawModelRun &&
       contextInjectionMode === "continuation-skip" &&
       (params.bootstrapContextRunKind ?? "default") !== "heartbeat" &&
-      (await hasCompletedBootstrapTurnForAttempt(params.sessionFile));
+      (await hasCompletedBootstrapTurnForAttempt());
     let preloadedBootstrapFiles: WorkspaceBootstrapFile[] | undefined;
     let bootstrapRouting =
       shouldProbeContinuationSkip || isRawModelRun || contextInjectionMode === "never"

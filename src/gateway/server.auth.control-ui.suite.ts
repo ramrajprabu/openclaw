@@ -1105,7 +1105,7 @@ export function registerControlUiAndPairingSuite(): void {
         role: "node",
         scopes: [],
         client,
-        deviceIdentityPath: identityPath,
+        deviceIdentityKey: identityKey,
       });
       expect(approvedConnect.ok).toBe(true);
       const approvedPayload = approvedConnect.payload as
@@ -1219,7 +1219,7 @@ export function registerControlUiAndPairingSuite(): void {
     const { issueDeviceBootstrapToken } = await import("../infra/device-bootstrap.js");
     const { listDevicePairing, rejectDevicePairing } = await import("../infra/device-pairing.js");
     const { server, port, prevToken } = await startControlUiServer("secret");
-    const { identityPath, identity } = await createOperatorIdentityFixture(
+    const { identityKey, identity } = await createOperatorIdentityFixture(
       "openclaw-bootstrap-node-reject-",
     );
     const client = {
@@ -1239,7 +1239,7 @@ export function registerControlUiAndPairingSuite(): void {
         role: "node",
         scopes: [],
         client,
-        deviceIdentityPath: identityPath,
+        deviceIdentityKey: identityKey,
       });
       expect(initial.ok).toBe(false);
       expect(
@@ -1268,7 +1268,7 @@ export function registerControlUiAndPairingSuite(): void {
         role: "node",
         scopes: [],
         client,
-        deviceIdentityPath: identityPath,
+        deviceIdentityKey: identityKey,
       });
       expect(retry.ok).toBe(false);
       expect((retry.error?.details as { code?: string } | undefined)?.code).toBe(
@@ -1317,7 +1317,7 @@ export function registerControlUiAndPairingSuite(): void {
         role: "node",
         scopes: [],
         client: nodeClient,
-        deviceIdentityPath: identityPath,
+        deviceIdentityKey: identityKey,
       });
       expect(initial.ok).toBe(false);
       wsInitial.close();

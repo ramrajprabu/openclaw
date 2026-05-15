@@ -1,3 +1,4 @@
+import path from "node:path";
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
 import {
   applyAgentConfig,
@@ -6,7 +7,6 @@ import {
   pruneAgentConfig,
 } from "../../commands/agents.config.js";
 import { mutateConfigFileWithRetry } from "../../config/config.js";
-import { resolveSessionTranscriptsDirForAgent } from "../../config/sessions.js";
 import type { IdentityConfig } from "../../config/types.base.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 
@@ -99,7 +99,7 @@ export async function deleteAgentConfigEntry(params: { agentId: string }): Promi
       }
       const workspaceDir = resolveAgentWorkspaceDir(draft, params.agentId);
       const agentDir = resolveAgentDir(draft, params.agentId);
-      const sessionsDir = resolveSessionTranscriptsDirForAgent(params.agentId);
+      const sessionsDir = path.join(agentDir, "sessions");
       const result = pruneAgentConfig(draft, params.agentId);
       Object.assign(draft, result.config);
       return {

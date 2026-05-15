@@ -74,6 +74,7 @@ import {
   formatDuplicateTelegramTokenReason,
   telegramConfigAdapter,
 } from "./shared.js";
+import { withTelegramStartupProbeSlot } from "./startup-probe-limiter.js";
 import { collectTelegramStatusIssues } from "./status-issues.js";
 import { parseTelegramTarget } from "./targets.js";
 import {

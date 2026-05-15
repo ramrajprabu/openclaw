@@ -421,6 +421,55 @@ function ensureSessionTranscriptScope(params: {
   }
 }
 
+function isAgentMainSessionKey(cfg: OpenClawConfig, key: string): boolean {
+  const agentId = resolveAgentIdFromSessionKey(key) ?? resolveDefaultAgentId(cfg);
+  return key === resolveAgentMainSessionKey({ cfg, agentId });
+}
+
+async function createAgentMainSessionForSend(params: {
+  cfg: OpenClawConfig;
+  canonicalKey: string;
+  context: GatewayRequestContext;
+}): Promise<
+  | { ok: true; canonicalKey: string; entry: SessionEntry }
+  | { ok: false; error: ReturnType<typeof errorShape> }
+> {
+  const target = resolveGatewaySessionDatabaseTarget({
+    cfg: params.cfg,
+    key: params.canonicalKey,
+  });
+  const store = loadAgentSessionRows(target.agentId);
+  const patched = await applySessionsPatchToStore({
+    cfg: params.cfg,
+    store,
+    storeKey: target.canonicalKey,
+    patch: { key: target.canonicalKey },
+    loadGatewayModelCatalog: params.context.loadGatewayModelCatalog,
+  });
+  if (!patched.ok) {
+    return { ok: false, error: patched.error };
+  }
+  upsertSessionEntry({
+    agentId: target.agentId,
+    sessionKey: target.canonicalKey,
+    entry: patched.entry,
+  });
+  const ensured = ensureSessionTranscriptScope({
+    agentId: target.agentId,
+    sessionId: patched.entry.sessionId,
+  });
+  if (!ensured.ok) {
+    return {
+      ok: false,
+      error: errorShape(
+        ErrorCodes.UNAVAILABLE,
+        `failed to create session transcript: ${ensured.error}`,
+      ),
+    };
+  }
+  return { ok: true, canonicalKey: target.canonicalKey, entry: patched.entry };
+}
+
 function resolveAbortSessionKey(params: {
   context: Pick<GatewayRequestContext, "chatAbortControllers">;
   requestedKey: string;
@@ -566,7 +615,10 @@ async function handleSessionSend(params: {
   if (!key) {
     return;
   }
-  const { cfg, entry, canonicalKey } = loadSessionEntry(key);
+  const loadedSession = loadSessionEntry(key);
+  const cfg = loadedSession.cfg;
+  let entry = loadedSession.entry;
+  let canonicalKey = loadedSession.canonicalKey;
   // Reject sends/steers targeting sessions whose owning agent was deleted (#65524).
   const deletedAgentId = resolveDeletedAgentIdFromSessionKey(cfg, canonicalKey);
   if (deletedAgentId !== null) {
@@ -582,11 +634,9 @@ async function handleSessionSend(params: {
   }
   if (!entry?.sessionId && !params.interruptIfActive && isAgentMainSessionKey(cfg, canonicalKey)) {
     const created = await createAgentMainSessionForSend({
-      req: params.req,
+      cfg,
       canonicalKey,
       context: params.context,
-      client: params.client,
-      isWebchatConnect: params.isWebchatConnect,
     });
     if (!created.ok) {
       params.respond(false, undefined, created.error);
@@ -594,7 +644,6 @@ async function handleSessionSend(params: {
     }
     entry = created.entry;
     canonicalKey = created.canonicalKey;
-    storePath = created.storePath;
   }
   if (!entry?.sessionId) {
     params.respond(

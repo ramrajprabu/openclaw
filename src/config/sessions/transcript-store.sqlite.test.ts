@@ -76,6 +76,34 @@ describe("SQLite session transcript store", () => {
     ]);
   });
 
+  it("reads transcript events from an explicit agent database path", () => {
+    const stateDir = createTempDir();
+    const customPath = path.join(stateDir, "custom-agent.sqlite");
+    const options = {
+      path: customPath,
+      env: { OPENCLAW_STATE_DIR: stateDir },
+      agentId: "main",
+      sessionId: "session-1",
+    };
+
+    appendSqliteSessionTranscriptEvent({
+      ...options,
+      event: { type: "session", id: "session-1" },
+      now: () => 100,
+    });
+
+    expect(loadSqliteSessionTranscriptEvents(options)).toEqual([
+      { seq: 0, createdAt: 100, event: { type: "session", id: "session-1" } },
+    ]);
+    expect(
+      loadSqliteSessionTranscriptEvents({
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        agentId: "main",
+        sessionId: "session-1",
+      }),
+    ).toEqual([]);
+  });
+
   it("dedupes message appends by SQLite idempotency identity", () => {
     const stateDir = createTempDir();
     const options = {

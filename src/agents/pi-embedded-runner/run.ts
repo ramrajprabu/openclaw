@@ -65,6 +65,7 @@ import {
   shouldPreferExplicitConfigApiKeyAuth,
 } from "../model-auth.js";
 import { ensureOpenClawModelCatalog } from "../models-config.js";
+import { resolveContextConfigProviderForRuntime } from "../openai-codex-routing.js";
 import {
   retireSessionMcpRuntime,
   retireSessionMcpRuntimeForSessionKey,

@@ -50,6 +50,20 @@ export type OpenClawRegisteredAgentDatabase = {
   sizeBytes: number | null;
 };
 
+function readSqliteUserVersion(db: DatabaseSync): number {
+  const row = db.prepare("PRAGMA user_version").get() as { user_version?: unknown } | undefined;
+  return Number(row?.user_version ?? 0);
+}
+
+function assertSupportedAgentSchemaVersion(db: DatabaseSync, pathname: string): void {
+  const userVersion = readSqliteUserVersion(db);
+  if (userVersion > OPENCLAW_AGENT_SCHEMA_VERSION) {
+    throw new Error(
+      `OpenClaw agent database ${pathname} uses newer schema version ${userVersion}; this OpenClaw build supports ${OPENCLAW_AGENT_SCHEMA_VERSION}.`,
+    );
+  }
+}
+
 export function resolveOpenClawAgentSqlitePath(options: OpenClawAgentDatabaseOptions): string {
   const agentId = normalizeAgentId(options.agentId);
   return (
@@ -75,7 +89,8 @@ function ensureOpenClawAgentDatabasePermissions(pathname: string): void {
   }
 }
 
-function ensureAgentSchema(db: DatabaseSync, agentId: string): void {
+function ensureAgentSchema(db: DatabaseSync, agentId: string, pathname?: string): void {
+  assertSupportedAgentSchemaVersion(db, pathname ?? `openclaw-agent:${agentId}`);
   db.exec(OPENCLAW_AGENT_SCHEMA_SQL);
   db.exec(`PRAGMA user_version = ${OPENCLAW_AGENT_SCHEMA_VERSION};`);
   const now = Date.now();
@@ -110,7 +125,7 @@ export function ensureOpenClawAgentDatabaseSchema(
   options: OpenClawAgentDatabaseOptions & { register?: boolean },
 ): void {
   const agentId = normalizeAgentId(options.agentId);
-  ensureAgentSchema(db, agentId);
+  ensureAgentSchema(db, agentId, resolveOpenClawAgentSqlitePath({ ...options, agentId }));
   if (options.register === true) {
     const pathname = resolveOpenClawAgentSqlitePath({ ...options, agentId });
     registerAgentDatabase({ agentId, path: pathname, env: options.env });
@@ -196,7 +211,13 @@ export function openOpenClawAgentDatabase(
   db.exec("PRAGMA synchronous = NORMAL;");
   db.exec(`PRAGMA busy_timeout = ${OPENCLAW_SQLITE_BUSY_TIMEOUT_MS};`);
   db.exec("PRAGMA foreign_keys = ON;");
-  ensureAgentSchema(db, agentId);
+  try {
+    ensureAgentSchema(db, agentId, pathname);
+  } catch (err) {
+    walMaintenance.close();
+    db.close();
+    throw err;
+  }
   ensureOpenClawAgentDatabasePermissions(pathname);
   const database = { agentId, db, path: pathname, walMaintenance };
   cachedDatabases.set(pathname, database);

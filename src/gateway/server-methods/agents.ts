@@ -20,13 +20,7 @@ import {
   ensureAgentWorkspace,
   isWorkspaceSetupCompleted,
 } from "../../agents/workspace.js";
-import {
-  applyAgentConfig,
-  findAgentEntryIndex,
-  listAgentEntries,
-  pruneAgentConfig,
-} from "../../commands/agents.config.js";
-import { replaceConfigFile } from "../../config/config.js";
+import { applyAgentConfig } from "../../commands/agents.config.js";
 import { purgeAgentSessionRows } from "../../config/sessions.js";
 import type { IdentityConfig } from "../../config/types.base.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -707,11 +701,12 @@ export const agentsHandlers: GatewayRequestHandlers = {
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
     const agentDir = resolveAgentDir(cfg, agentId);
 
-    const result = pruneAgentConfig(cfg, agentId);
-    await replaceConfigFile({
-      nextConfig: result.config,
-      afterWrite: { mode: "auto" },
-    });
+    const committed = await deleteAgentConfigEntry({ agentId });
+    const deleteResult = committed.result;
+    if (!deleteResult) {
+      respondAgentNotFound(respond, agentId);
+      return;
+    }
 
     // Purge SQLite session rows so orphaned sessions cannot be targeted (#65524).
     await purgeAgentSessionRows(cfg, agentId);
