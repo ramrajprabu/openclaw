@@ -22,7 +22,8 @@ const ANTHROPIC_TIMEOUT_MS = 120_000;
 const LIVE_CACHE_LANE_RETRIES = 1;
 const LIVE_CACHE_RESPONSE_RETRIES = 2;
 const OPENAI_CACHE_REASONING = "low" as unknown as never;
-const CACHE_PROBE_MIN_MAX_TOKENS = 256;
+const OPENAI_CACHE_PROBE_MIN_MAX_TOKENS = 256;
+const ANTHROPIC_CACHE_PROBE_MIN_MAX_TOKENS = 1024;
 const OPENAI_PREFIX = buildStableCachePrefix("openai");
 const OPENAI_MCP_PREFIX = buildStableCachePrefix("openai-mcp-style");
 const ANTHROPIC_PREFIX = buildStableCachePrefix("anthropic");
@@ -36,6 +37,7 @@ type ProviderKey = keyof typeof LIVE_CACHE_REGRESSION_BASELINE;
 type CacheLane = "image" | "mcp" | "stable" | "tool";
 type CacheUsage = {
   input?: number;
+  output?: number;
   cacheRead?: number;
   cacheWrite?: number;
 };
@@ -123,6 +125,7 @@ function normalizeCacheUsage(usage: AssistantMessage["usage"] | undefined): Cach
     typeof value?.[key] === "number" ? value[key] : undefined;
   return {
     input: readNumber("input"),
+    output: readNumber("output"),
     cacheRead: readNumber("cacheRead"),
     cacheWrite: readNumber("cacheWrite"),
   };
@@ -159,7 +162,11 @@ function resolveCacheProbeMaxTokens(params: {
   providerTag: "anthropic" | "openai";
 }): number {
   const requested = params.maxTokens ?? 64;
-  return Math.max(requested, CACHE_PROBE_MIN_MAX_TOKENS);
+  const floor =
+    params.providerTag === "anthropic"
+      ? ANTHROPIC_CACHE_PROBE_MIN_MAX_TOKENS
+      : OPENAI_CACHE_PROBE_MIN_MAX_TOKENS;
+  return Math.max(requested, floor);
 }
 
 function shouldAcceptEmptyCacheProbe(params: {
@@ -297,7 +304,7 @@ async function completeCacheProbe(params: {
     }
     if (shouldRetryCacheProbeText({ attempt, suffix: params.suffix, text })) {
       logLiveCache(
-        `${params.providerTag} cache lane ${params.suffix} response mismatch; retrying: ${JSON.stringify(text)}`,
+        `${params.providerTag} cache lane ${params.suffix} response mismatch; retrying: ${JSON.stringify(text)} stop=${response.stopReason} ${formatUsage(usage)}`,
       );
       continue;
     }
@@ -434,7 +441,7 @@ async function runAnthropicDisabledLane(params: {
 }
 
 function formatUsage(usage: CacheUsage | undefined) {
-  return `cacheRead=${usage?.cacheRead ?? 0} cacheWrite=${usage?.cacheWrite ?? 0} input=${usage?.input ?? 0}`;
+  return `cacheRead=${usage?.cacheRead ?? 0} cacheWrite=${usage?.cacheWrite ?? 0} input=${usage?.input ?? 0} output=${usage?.output ?? 0}`;
 }
 
 function warmupHasCacheEvidence(params: { floor: LiveCacheFloor; warmup: CacheRun }): boolean {
