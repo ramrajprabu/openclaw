@@ -1,6 +1,16 @@
 import fs from "node:fs";
 import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("./harness.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./harness.js")>();
+  return {
+    ...actual,
+    createCopilotSdkAgentHarness: vi.fn(actual.createCopilotSdkAgentHarness),
+  };
+});
+
+import { createCopilotSdkAgentHarness } from "./harness.js";
 import plugin from "./index.js";
 
 function loadManifest(): Record<string, unknown> {
@@ -149,5 +159,16 @@ describe("copilot-sdk plugin", () => {
       supported: false,
       reason: "provider is not one of: copilot, github, openclaw",
     });
+  });
+
+  it("passes through a valid pool idle TTL and ignores malformed values", () => {
+    const createHarness = vi.mocked(createCopilotSdkAgentHarness);
+    createHarness.mockClear();
+
+    registerWithPluginConfig({ pool: { idleTtlMs: 2500 } });
+    registerWithPluginConfig({ pool: { idleTtlMs: 0 } });
+
+    expect(createHarness).toHaveBeenNthCalledWith(1, { poolOptions: { idleTtlMs: 2500 } });
+    expect(createHarness.mock.calls[1]?.[0]).toEqual({});
   });
 });

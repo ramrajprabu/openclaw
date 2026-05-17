@@ -536,6 +536,56 @@ describe("runCopilotSdkAttempt", () => {
     expect(pool.release).toHaveBeenCalledTimes(0);
   });
 
+  it("release failure after a successful send rejects the attempt", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+    pool.release = vi.fn(async () => {
+      throw "release failed";
+    });
+
+    await expect(runCopilotSdkAttempt(makeParams(), { pool })).rejects.toThrow("release failed");
+
+    expect(sdk.sessions[0]?.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("release failure after a primary prompt error warns without masking the error", async () => {
+    const primaryError = new Error("send failed");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const sdk = makeFakeSdk({
+      onCreateSession: (session) => {
+        session.sendAndWait.mockRejectedValueOnce(primaryError);
+      },
+    });
+    const pool = makeFakePool(sdk);
+    pool.release = vi.fn(async () => {
+      throw "release failed";
+    });
+
+    const result = await runCopilotSdkAttempt(makeParams(), { pool });
+
+    expect(result.promptError).toBe(primaryError);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[copilot-sdk-attempt] pool.release failed after primary error",
+      expect.objectContaining({ message: "release failed" }),
+    );
+  });
+
+  it("accepts string model ids and falls back to top-level provider metadata", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+
+    const result = await runCopilotSdkAttempt(
+      makeParams({ model: "gpt-4.1" as never, provider: "github" } as never),
+      { now: () => 123, pool },
+    );
+
+    expect(getPromptErrorCode(result)).toBeUndefined();
+    expect(sdk.createSession).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-4.1" }));
+    expect(result.currentAttemptAssistant).toEqual(
+      expect.objectContaining({ provider: "github", timestamp: 123 }),
+    );
+  });
+
   it("cleanup on success", async () => {
     const sdk = makeFakeSdk();
     const pool = makeFakePool(sdk);

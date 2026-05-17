@@ -690,6 +690,49 @@ describe("attachEventBridge", () => {
     expect(bridge.finalizeAssistantTexts()).toEqual(["done"]);
   });
 
+  it("ignores empty assistant and reasoning deltas", () => {
+    const onAssistantDelta = vi.fn();
+    const session = createFakeSession();
+    const bridge = attachEventBridge(session, {
+      getSdkSessionId: () => "sdk-session-id",
+      isAborted: () => false,
+      onAssistantDelta,
+    });
+
+    session.emit(
+      "assistant.message_delta",
+      makeEvent("assistant.message_delta", { deltaContent: "", messageId: "msg-1" }),
+    );
+    session.emit(
+      "assistant.reasoning_delta",
+      makeEvent("assistant.reasoning_delta", { deltaContent: "", reasoningId: "reason-1" }),
+    );
+    session.emit("assistant.message", makeAssistantMessageEvent("", { messageId: "msg-1" }));
+
+    expect(onAssistantDelta).not.toHaveBeenCalled();
+    expect(bridge.finalizeAssistantTexts()).toEqual([]);
+    expect(bridge.buildAssistantMessage({ modelRef: MODEL_REF, now: () => 13 })).toBeUndefined();
+  });
+
+  it("detach is idempotent after the first unsubscribe pass", () => {
+    const order: string[] = [];
+    const session = createFakeSession({
+      onReturnedUnsubscribe: (eventType) => {
+        order.push(eventType);
+      },
+    });
+    const bridge = attachEventBridge(session, {
+      getSdkSessionId: () => "sdk-session-id",
+      isAborted: () => false,
+    });
+
+    bridge.detach();
+    bridge.detach();
+
+    expect(order).toEqual([...REGISTERED_EVENT_TYPES].reverse());
+    expect(session.off).toHaveBeenCalledTimes(REGISTERED_EVENT_TYPES.length);
+  });
+
   it("detach unsubscribes in reverse order when session.on returns unsubscribe functions", () => {
     const order: string[] = [];
     const session = createFakeSession({

@@ -394,6 +394,73 @@ describe("createCopilotClientPool", () => {
     );
   });
 
+  it("concurrent dispose waits for the in-flight shutdown and does not duplicate errors", async () => {
+    const stopDeferred = createDeferred<Error[]>();
+    const sdk = makeFake({
+      stop: async () => stopDeferred.promise,
+    });
+    const pool = createCopilotClientPool({ sdkFactory: sdk.fake });
+
+    await pool.acquire(makeKey(), makeOptions());
+
+    const firstDisposePromise = pool.dispose();
+    const secondDisposePromise = pool.dispose();
+    await Promise.resolve();
+
+    expect(sdk.stops).toEqual([1]);
+
+    stopDeferred.resolve([new Error("stop failed")]);
+    const firstErrors = await firstDisposePromise;
+    const secondErrors = await secondDisposePromise;
+
+    expect(firstErrors.map((error) => error.message)).toEqual(["stop failed"]);
+    expect(secondErrors).toEqual([]);
+  });
+
+  it("normalizes non-Error stop failures during dispose", async () => {
+    const sdk = makeFake({
+      stop: () => {
+        throw "stop-string";
+      },
+    });
+    const pool = createCopilotClientPool({ sdkFactory: sdk.fake });
+
+    await pool.acquire(makeKey(), makeOptions());
+
+    const errors = await pool.dispose();
+
+    expect(errors.map((error) => error.message)).toEqual(["stop-string"]);
+  });
+
+  it("treats Windows copilotHome paths as case-insensitive when keying the pool", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+
+    try {
+      const sdk = makeFake();
+      const pool = createCopilotClientPool({ sdkFactory: sdk.fake });
+      const firstHome = "C:/Users/Tester/CopilotHome/";
+      const secondHome = "c:/users/tester/copilothome";
+
+      const first = await pool.acquire(
+        makeKey({ copilotHome: firstHome }),
+        makeOptions({ copilotHome: firstHome }),
+      );
+      const second = await pool.acquire(
+        makeKey({ copilotHome: secondHome }),
+        makeOptions({ copilotHome: secondHome }),
+      );
+
+      const normalizedHome = normalizeHomeForTest(firstHome);
+      expect(first.client).toBe(second.client);
+      expect(first.key.copilotHome).toBe(normalizedHome);
+      expect(second.key.copilotHome).toBe(normalizedHome);
+      expect(String(sdk.ctorCalls[0]?.copilotHome)).toBe(normalizedHome);
+    } finally {
+      Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform });
+    }
+  });
+
   it("path normalization", async () => {
     const sdk = makeFake();
     const pool = createCopilotClientPool({ sdkFactory: sdk.fake });
