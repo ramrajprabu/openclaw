@@ -9,6 +9,16 @@ import {
   type EmbeddedAgentRuntime,
 } from "../pi-embedded-runner/runtime.js";
 
+export const KNOWN_AGENT_HARNESS_RUNTIME_IDS = ["pi", "auto", "codex", "copilot-sdk"] as const;
+
+export type KnownAgentHarnessRuntimeId = (typeof KNOWN_AGENT_HARNESS_RUNTIME_IDS)[number];
+
+const knownAgentHarnessRuntimeIdSet = new Set<string>(KNOWN_AGENT_HARNESS_RUNTIME_IDS);
+
+export function isKnownAgentHarnessRuntimeId(id: string): id is KnownAgentHarnessRuntimeId {
+  return knownAgentHarnessRuntimeIdSet.has(id);
+}
+
 export type AgentHarnessPolicy = {
   runtime: EmbeddedAgentRuntime;
   runtimeSource?: "model" | "provider" | "implicit";
