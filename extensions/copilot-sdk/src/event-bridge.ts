@@ -1,15 +1,14 @@
 import type { SessionEvent, SessionEventType } from "@github/copilot-sdk";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
+import {
+  buildCopilotSdkAssistantUsage,
+  normalizeCopilotSdkUsage,
+  type CopilotSdkUsageSnapshot,
+} from "./usage-bridge.js";
 
 export type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
 
-export interface AssistantUsageSnapshot {
-  cacheRead?: number;
-  cacheWrite?: number;
-  input?: number;
-  output?: number;
-  total?: number;
-}
+export type AssistantUsageSnapshot = CopilotSdkUsageSnapshot;
 
 export interface OnAssistantDeltaPayload {
   delta: string;
@@ -107,7 +106,10 @@ export function attachEventBridge(
       usage,
     };
     deltaQueue = deltaQueue
-      .then(() => onAssistantDelta(payload), () => onAssistantDelta(payload))
+      .then(
+        () => onAssistantDelta(payload),
+        () => onAssistantDelta(payload),
+      )
       .catch((error: unknown) => {
         firstDeltaError ??= error;
       });
@@ -141,7 +143,7 @@ export function attachEventBridge(
   });
 
   registerListener(session, unsubscribeFns, "assistant.usage", (event) => {
-    usage = normalizeUsage(event.data);
+    usage = normalizeCopilotSdkUsage(event.data);
   });
 
   registerListener(session, unsubscribeFns, "tool.execution_start", (event) => {
@@ -242,7 +244,9 @@ function buildAssistantMessage(params: {
   usage?: AssistantUsageSnapshot;
 }): AssistantMessage | undefined {
   const event = params.event;
-  const text = event ? event.data.content || params.assistantTexts[params.assistantTexts.length - 1] || "" : "";
+  const text = event
+    ? event.data.content || params.assistantTexts[params.assistantTexts.length - 1] || ""
+    : "";
   const reasoningText =
     event?.data.reasoningText ?? joinReasoning(params.reasoningOrder, params.reasoningById);
   const toolRequests = event?.data.toolRequests ?? [];
@@ -266,8 +270,6 @@ function buildAssistantMessage(params: {
     });
   }
 
-  const normalizedUsage = normalizeUsageWithFallback(params.usage, event?.data.outputTokens);
-
   return {
     api: params.modelRef.api ?? "openai-responses",
     content,
@@ -276,20 +278,10 @@ function buildAssistantMessage(params: {
     role: "assistant",
     stopReason: toolRequests.length > 0 ? "toolUse" : "stop",
     timestamp: params.now(),
-    usage: {
-      cacheRead: normalizedUsage.cacheRead ?? 0,
-      cacheWrite: normalizedUsage.cacheWrite ?? 0,
-      cost: {
-        cacheRead: 0,
-        cacheWrite: 0,
-        input: 0,
-        output: 0,
-        total: 0,
-      },
-      input: normalizedUsage.input ?? 0,
-      output: normalizedUsage.output ?? 0,
-      totalTokens: normalizedUsage.total ?? 0,
-    },
+    usage: buildCopilotSdkAssistantUsage({
+      fallbackOutputTokens: event?.data.outputTokens,
+      usage: params.usage,
+    }),
   };
 }
 
@@ -341,52 +333,6 @@ function isAssistantMessageEvent(
 
 function joinReasoning(order: string[], reasoningById: Map<string, string>): string {
   return order.map((reasoningId) => reasoningById.get(reasoningId) ?? "").join("");
-}
-
-function normalizeUsage(data: {
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-}): AssistantUsageSnapshot {
-  const input = normalizeUsageNumber(data.inputTokens);
-  const output = normalizeUsageNumber(data.outputTokens);
-  const cacheRead = normalizeUsageNumber(data.cacheReadTokens);
-  const cacheWrite = normalizeUsageNumber(data.cacheWriteTokens);
-  const total = [input, output, cacheRead, cacheWrite].reduce<number>(
-    (sum, value) => sum + (value ?? 0),
-    0,
-  );
-  return {
-    cacheRead,
-    cacheWrite,
-    input,
-    output,
-    total,
-  };
-}
-
-function normalizeUsageNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? Math.max(0, Math.trunc(value))
-    : undefined;
-}
-
-function normalizeUsageWithFallback(
-  usage: AssistantUsageSnapshot | undefined,
-  outputTokens: number | undefined,
-): AssistantUsageSnapshot {
-  if (usage) {
-    return usage;
-  }
-  const normalizedOutput = normalizeUsageNumber(outputTokens);
-  return {
-    cacheRead: 0,
-    cacheWrite: 0,
-    input: 0,
-    output: normalizedOutput ?? 0,
-    total: normalizedOutput ?? 0,
-  };
 }
 
 function readString(value: unknown): string | undefined {

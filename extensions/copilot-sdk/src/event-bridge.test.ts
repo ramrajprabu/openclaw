@@ -67,11 +67,13 @@ function makeAssistantMessageEvent(
   });
 }
 
-function createFakeSession(options: {
-  onOff?: (eventType: string) => void;
-  onReturnedUnsubscribe?: (eventType: string) => void;
-  returnUnsubscribe?: boolean;
-} = {}): FakeSession {
+function createFakeSession(
+  options: {
+    onOff?: (eventType: string) => void;
+    onReturnedUnsubscribe?: (eventType: string) => void;
+    returnUnsubscribe?: boolean;
+  } = {},
+): FakeSession {
   const listeners = new Map<string, Array<(event: SessionEvent) => void>>();
   const returnUnsubscribe = options.returnUnsubscribe !== false;
 
@@ -172,7 +174,12 @@ describe("attachEventBridge", () => {
 
     session.emit(
       "assistant.usage",
-      makeEvent("assistant.usage", { cacheReadTokens: 1, cacheWriteTokens: 2, inputTokens: 3, outputTokens: 4 }),
+      makeEvent("assistant.usage", {
+        cacheReadTokens: 1,
+        cacheWriteTokens: 2,
+        inputTokens: 3,
+        outputTokens: 4,
+      }),
     );
     sdkSessionId = "sdk-session-2";
     session.emit(
@@ -443,6 +450,76 @@ describe("attachEventBridge", () => {
     });
   });
 
+  it("preserves all-zero usage snapshot after an invalid assistant.usage event", () => {
+    const session = createFakeSession();
+    const bridge = attachEventBridge(session, {
+      getSdkSessionId: () => "sdk-session-id",
+      isAborted: () => false,
+    });
+
+    bridge.recordSendResult(makeAssistantMessageEvent("done", { outputTokens: 7 }));
+    session.emit(
+      "assistant.usage",
+      makeEvent("assistant.usage", {
+        cacheReadTokens: "bad",
+        cacheWriteTokens: Number.POSITIVE_INFINITY,
+        inputTokens: undefined,
+        outputTokens: Number.NaN,
+      }),
+    );
+
+    expect(bridge.snapshot().usage).toEqual({
+      cacheRead: undefined,
+      cacheWrite: undefined,
+      input: undefined,
+      output: undefined,
+      total: 0,
+    });
+    expect(bridge.buildAssistantMessage({ modelRef: MODEL_REF, now: () => 9.5 })?.usage).toEqual({
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: {
+        cacheRead: 0,
+        cacheWrite: 0,
+        input: 0,
+        output: 0,
+        total: 0,
+      },
+      input: 0,
+      output: 0,
+      totalTokens: 0,
+    });
+  });
+
+  it("overwrites prior usage with an all-zero snapshot when a later invalid usage event arrives", () => {
+    const session = createFakeSession();
+    const bridge = attachEventBridge(session, {
+      getSdkSessionId: () => "sdk-session-id",
+      isAborted: () => false,
+    });
+
+    session.emit(
+      "assistant.usage",
+      makeEvent("assistant.usage", {
+        inputTokens: 5,
+      }),
+    );
+    session.emit(
+      "assistant.usage",
+      makeEvent("assistant.usage", {
+        inputTokens: "bad",
+      }),
+    );
+
+    expect(bridge.snapshot().usage).toEqual({
+      cacheRead: undefined,
+      cacheWrite: undefined,
+      input: undefined,
+      output: undefined,
+      total: 0,
+    });
+  });
+
   it("tool.execution_start increments startedCount and pushes toolMetas without meta", () => {
     const session = createFakeSession();
     const bridge = attachEventBridge(session, {
@@ -554,7 +631,9 @@ describe("attachEventBridge", () => {
       }),
     );
 
-    expect((activeBridge.snapshot().streamError as Error & { code?: string })?.code).toBe("boom_code");
+    expect((activeBridge.snapshot().streamError as Error & { code?: string })?.code).toBe(
+      "boom_code",
+    );
     expect(activeBridge.snapshot().streamError?.message).toBe("boom");
     expect(abortedBridge.snapshot().streamError).toBeUndefined();
   });
