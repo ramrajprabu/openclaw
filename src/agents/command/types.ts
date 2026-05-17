@@ -53,6 +53,8 @@ export type AgentCommandOpts = {
   provider?: string;
   /** Per-run model override. */
   model?: string;
+  /** Force a specific agent harness id for this embedded/local run. */
+  harness?: string;
   to?: string;
   sessionId?: string;
   sessionKey?: string;
