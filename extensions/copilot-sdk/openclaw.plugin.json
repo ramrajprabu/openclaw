@@ -1,10 +1,49 @@
 {
   "id": "copilot-sdk",
   "name": "GitHub Copilot SDK",
-  "description": "Registers the placeholder copilot-sdk agent harness scaffold.",
+  "description": "Registers the GitHub Copilot SDK agent harness.",
   "version": "2026.5.17",
   "activation": {
     "onStartup": false,
     "onAgentHarnesses": ["copilot-sdk"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "providerIds": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["github", "openclaw", "copilot"]
+      },
+      "pool": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "idleTtlMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 300000
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "providerIds": {
+      "label": "Provider Whitelist",
+      "help": "Provider IDs allowed to use the GitHub Copilot SDK harness when requestedRuntime is copilot-sdk.",
+      "advanced": true
+    },
+    "pool": {
+      "label": "Client Pool",
+      "help": "Advanced GitHub Copilot SDK client pooling controls.",
+      "advanced": true
+    },
+    "pool.idleTtlMs": {
+      "label": "Idle Client TTL",
+      "help": "Milliseconds to keep an idle GitHub Copilot SDK client alive before disposal.",
+      "advanced": true
+    }
   }
 }
