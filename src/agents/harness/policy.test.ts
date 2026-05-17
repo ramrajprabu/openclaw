@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
+  AGENT_HARNESS_RUNTIME_DESCRIPTORS,
+  getAgentHarnessRuntimeDescriptor,
   isKnownAgentHarnessRuntimeId,
   KNOWN_AGENT_HARNESS_RUNTIME_IDS,
+  listAgentHarnessRuntimeDescriptors,
   resolveAgentHarnessPolicy,
 } from "./policy.js";
 
@@ -71,5 +74,53 @@ describe("agent harness runtime policy", () => {
       runtime: "copilot-sdk",
       runtimeSource: "provider",
     });
+  });
+
+  it("describes pi as a builtin harness", () => {
+    const pi = getAgentHarnessRuntimeDescriptor("pi");
+    expect(pi).toBeDefined();
+    expect(pi?.kind).toBe("builtin-harness");
+    expect(pi?.label).toBe("Built-in PI");
+    expect(pi?.builtinPluginId).toBeUndefined();
+  });
+
+  it("describes copilot-sdk as a plugin harness with a builtin plugin id", () => {
+    const copilotSdk = getAgentHarnessRuntimeDescriptor("copilot-sdk");
+    expect(copilotSdk).toBeDefined();
+    expect(copilotSdk?.kind).toBe("plugin-harness");
+    expect(copilotSdk?.label).toBe("GitHub Copilot SDK");
+    expect(copilotSdk?.builtinPluginId).toBe("@openclaw/copilot-sdk-harness");
+  });
+
+  it("classifies auto as a fallback and codex as an internal runtime alias", () => {
+    expect(getAgentHarnessRuntimeDescriptor("auto")?.kind).toBe("fallback");
+    expect(getAgentHarnessRuntimeDescriptor("codex")?.kind).toBe("internal-runtime-alias");
+  });
+
+  it("returns undefined for unknown runtime ids", () => {
+    expect(getAgentHarnessRuntimeDescriptor("not-a-harness")).toBeUndefined();
+    expect(isKnownAgentHarnessRuntimeId("not-a-harness")).toBe(false);
+  });
+
+  it("descriptor table is internally consistent", () => {
+    const descriptors = listAgentHarnessRuntimeDescriptors();
+
+    const ids = descriptors.map((descriptor) => descriptor.id);
+    expect(new Set(ids).size).toBe(ids.length);
+
+    for (const descriptor of descriptors) {
+      expect(descriptor.label.length).toBeGreaterThan(0);
+    }
+
+    for (const descriptor of descriptors) {
+      if (descriptor.kind === "plugin-harness") {
+        expect(descriptor.builtinPluginId).toBeTypeOf("string");
+        expect(descriptor.builtinPluginId?.length).toBeGreaterThan(0);
+      } else {
+        expect(descriptor.builtinPluginId).toBeUndefined();
+      }
+    }
+
+    expect(KNOWN_AGENT_HARNESS_RUNTIME_IDS).toEqual(ids);
   });
 });
