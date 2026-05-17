@@ -16,12 +16,7 @@ import {
   type SessionLike,
 } from "./event-bridge.js";
 import type { ClientCreateOptions, CopilotClientPool, PoolKey, PooledClient } from "./runtime.js";
-
-// SAFETY: tool-bridge has not yet been implemented. We pass tools: [] to the
-// SDK so no OpenClaw tool can be invoked from this attempt. tool-bridge will
-// replace this with a converted SDK Tool[] backed by params.tools and
-// delegating execution through params.onToolCall.
-const SDK_TOOLS: SdkTool[] = [];
+import { createCopilotSdkToolBridge } from "./tool-bridge.js";
 
 const SUPPORTED_PROVIDERS = new Set(["github", "openclaw", "copilot"]);
 const TOKEN_PROFILE_ERROR =
@@ -60,6 +55,7 @@ type SdkUserInputRequest = {
 export interface CopilotSdkAttemptDeps {
   pool: CopilotClientPool;
   now?: () => number;
+  createToolBridge?: typeof createCopilotSdkToolBridge;
 }
 
 export async function runCopilotSdkAttempt(
@@ -68,6 +64,7 @@ export async function runCopilotSdkAttempt(
 ): Promise<AgentHarnessAttemptResult> {
   const now = deps.now ?? Date.now;
   const input = params as AttemptParamsLike;
+  const createToolBridge = deps.createToolBridge ?? createCopilotSdkToolBridge;
   const messages = getMessagesSnapshotInput(input);
 
   if (params.abortSignal?.aborted) {
@@ -126,9 +123,36 @@ export async function runCopilotSdkAttempt(
   const poolAcquire = resolvePoolAcquire(input);
 
   try {
+    let sdkTools: SdkTool[];
+    try {
+      const toolBridge = await createToolBridge({
+        modelProvider: modelRef.provider,
+        modelId: modelRef.id,
+        agentId: readString(params.agentId) ?? "copilot-sdk",
+        sessionId: readString(input.sessionId) ?? "copilot-sdk-session",
+        sessionKey: readString((input as { sessionKey?: unknown }).sessionKey),
+        agentDir: readString(input.agentDir),
+        workspaceDir: readString(input.workspaceDir) ?? readString(input.cwd),
+        abortSignal: params.abortSignal,
+      });
+      sdkTools = toolBridge.sdkTools;
+    } catch (error: unknown) {
+      return createResult(input, {
+        messagesSnapshot: messages,
+        now,
+        promptError: createPromptError(
+          "tool_bridge_failure",
+          `[copilot-sdk-attempt] tool-bridge construction failed: ${toError(error).message}`,
+          error,
+        ),
+        sdkSessionId: undefined,
+        sessionIdUsed: input.sessionId,
+      });
+    }
+
     handle = await deps.pool.acquire(poolAcquire.key, poolAcquire.options);
     const client = handle.client;
-    const sessionConfig = createSessionConfig(input, modelRef.id);
+    const sessionConfig = createSessionConfig(input, modelRef.id, sdkTools);
     const resumeSessionId = readString(input.initialReplayState?.sdkSessionId);
 
     session = (resumeSessionId
@@ -303,6 +327,7 @@ function createPromptError(code: string, message: string, cause?: unknown): Prom
 function createSessionConfig(
   params: AttemptParamsLike,
   sdkModelId: string,
+  sdkTools: SdkTool[],
 ): Pick<
   SessionConfig,
   | "model"
@@ -314,10 +339,10 @@ function createSessionConfig(
 > {
   return {
     model: sdkModelId,
-    // SAFETY: permission-bridge has not yet been implemented. The placeholder
-    // handler denies every permission request (fail-closed). The SDK will report
-    // the denial back to the model. permission-bridge replaces this with the
-    // copied PI tool-policy logic.
+    // SAFETY: permission-bridge has not yet been implemented. This placeholder
+    // denies every permission request (fail-closed), and the SDK reports the
+    // denial back to the model. permission-bridge replaces this with the copied
+    // PI tool-policy logic.
     onPermissionRequest: (async (_request: SdkPermissionRequest) => {
       return {
         kind: "deny" as const,
@@ -338,7 +363,7 @@ function createSessionConfig(
       );
     }) as NonNullable<SessionConfig["onUserInputRequest"]>,
     reasoningEffort: params.reasoningEffort,
-    tools: SDK_TOOLS,
+    tools: sdkTools,
     workingDirectory: readString(params.workspaceDir) ?? readString(params.cwd),
   };
 }

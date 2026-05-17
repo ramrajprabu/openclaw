@@ -1,4 +1,4 @@
-import type { CopilotClient } from "@github/copilot-sdk";
+import type { CopilotClient, Tool as SdkTool } from "@github/copilot-sdk";
 import type {
   AgentHarnessAttemptParams,
   AgentHarnessAttemptResult,
@@ -259,8 +259,12 @@ describe("runCopilotSdkAttempt", () => {
       },
     });
     const pool = makeFakePool(sdk);
+    const createToolBridge = vi.fn(async () => ({ sdkTools: [], sourceTools: [] }));
 
-    const runPromise = runCopilotSdkAttempt(makeParams({ onAssistantDelta }), { pool });
+    const runPromise = runCopilotSdkAttempt(makeParams({ onAssistantDelta }), {
+      createToolBridge,
+      pool,
+    });
     await flushAsync();
 
     const session = sdk.sessions[0];
@@ -292,8 +296,9 @@ describe("runCopilotSdkAttempt", () => {
       },
     });
     const pool = makeFakePool(sdk);
+    const createToolBridge = vi.fn(async () => ({ sdkTools: [], sourceTools: [] }));
 
-    const runPromise = runCopilotSdkAttempt(makeParams(), { pool });
+    const runPromise = runCopilotSdkAttempt(makeParams(), { createToolBridge, pool });
     await flushAsync();
 
     const session = sdk.sessions[0];
@@ -340,8 +345,10 @@ describe("runCopilotSdkAttempt", () => {
       },
     });
     const pool = makeFakePool(sdk);
+    const createToolBridge = vi.fn(async () => ({ sdkTools: [], sourceTools: [] }));
 
     const runPromise = runCopilotSdkAttempt(makeParams({ abortSignal: controller.signal }), {
+      createToolBridge,
       pool,
     });
     await flushAsync();
@@ -385,13 +392,68 @@ describe("runCopilotSdkAttempt", () => {
     expect(result.timedOut).toBe(false);
   });
 
-  it("placeholder tools", async () => {
+  it("tool bridge wiring: injected tools populate session config", async () => {
     const sdk = makeFakeSdk();
     const pool = makeFakePool(sdk);
+    const sdkTools: SdkTool[] = [
+      {
+        description: "Fake SDK tool",
+        handler: async () => ({ resultType: "success", textResultForLlm: "ok" }),
+        name: "fake_sdk_tool",
+        parameters: { type: "object" },
+      },
+    ];
+    const createToolBridge = vi.fn(async () => ({ sdkTools, sourceTools: [] }));
 
-    await runCopilotSdkAttempt(makeParams(), { pool });
+    await runCopilotSdkAttempt(makeParams(), { createToolBridge, pool });
 
-    expect((sdk.createSession.mock.calls[0]?.[0] as { tools?: unknown[] }).tools).toEqual([]);
+    expect(createToolBridge).toHaveBeenCalledTimes(1);
+    expect(createToolBridge).toHaveBeenCalledWith({
+      abortSignal: undefined,
+      agentDir: "C:\\copilot-home",
+      agentId: "agent-1",
+      modelId: "gpt-4o",
+      modelProvider: "github",
+      sessionId: "session-1",
+      sessionKey: undefined,
+      workspaceDir: "C:\\workspace",
+    });
+    expect((sdk.createSession.mock.calls[0]?.[0] as { tools?: unknown[] }).tools).toBe(sdkTools);
+  });
+
+  it("tool bridge failures become prompt errors", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+    const createToolBridge = vi.fn(async () => {
+      throw new Error("bridge failed");
+    });
+
+    const result = await runCopilotSdkAttempt(makeParams(), { createToolBridge, pool });
+
+    expect(getPromptErrorCode(result)).toBe("tool_bridge_failure");
+    expect((result.promptError as Error | undefined)?.message).toBe(
+      "[copilot-sdk-attempt] tool-bridge construction failed: bridge failed",
+    );
+    expect(sdk.createSession).toHaveBeenCalledTimes(0);
+    expect(pool.acquire).toHaveBeenCalledTimes(0);
+    expect(pool.release).toHaveBeenCalledTimes(0);
+  });
+
+  it("unsupported providers skip injected tool bridge wiring", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+    const createToolBridge = vi.fn(async () => ({ sdkTools: [], sourceTools: [] }));
+
+    const result = await runCopilotSdkAttempt(
+      makeParams({
+        model: { api: "openai-responses", id: "claude", provider: "anthropic" } as never,
+      }),
+      { createToolBridge, pool },
+    );
+
+    expect(getPromptErrorCode(result)).toBe("model_not_supported");
+    expect(createToolBridge).toHaveBeenCalledTimes(0);
+    expect(sdk.createSession).toHaveBeenCalledTimes(0);
   });
 
   it("placeholder permission handler denies", async () => {
