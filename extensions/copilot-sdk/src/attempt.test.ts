@@ -1019,13 +1019,24 @@ describe("runCopilotSdkAttempt", () => {
       };
       for (const [index, message] of args.messages.entries()) {
         if (
-          message.role === "user" ||
-          message.role === "assistant" ||
-          message.role === "toolResult"
+          message.role !== "user" &&
+          message.role !== "assistant" &&
+          message.role !== "toolResult"
         ) {
-          expect(message.__openclaw?.mirrorIdentity).toMatch(
-            new RegExp(`:${message.role}:${index}$`, "u"),
-          );
+          continue;
+        }
+        const identity = message.__openclaw?.mirrorIdentity ?? "";
+        // The terminal assistant carries the turn-stable
+        // `${runId}:assistant:final` identity attached by attempt.ts
+        // (rubber-duck-validated identity scheme — survives SDK session
+        // reuse across turns). Caller-passed history without an
+        // identity falls through to the positional `${scope}:role:idx`
+        // fingerprint that the existing tagging map applies.
+        if (message.role === "assistant" && index === args.messages.length - 1) {
+          expect(identity).toMatch(/:assistant:final$/u);
+          expect(identity).toContain("run-1");
+        } else {
+          expect(identity).toMatch(new RegExp(`:${message.role}:${index}$`, "u"));
         }
       }
     });
@@ -1045,6 +1056,181 @@ describe("runCopilotSdkAttempt", () => {
       // internally; this test asserts attempt.ts also awaits it without
       // letting an unexpected rejection escape.
       await expect(runCopilotSdkAttempt(makeParams(), { pool })).resolves.toBeDefined();
+    });
+
+    // ---------------------------------------------------------------
+    // Dogfood finding #3: synthetic current-turn user message in the
+    // OpenClaw audit transcript (mirrors codex event-projector pattern).
+    //
+    // Without this synthesis the dashboard / CLI history shows only
+    // assistant bubbles — the user's typed turn is lost — because the
+    // OpenClaw shell's `persistTextTurnTranscript` skips its own user
+    // write when `embeddedAssistantGapFill` is true, trusting the
+    // harness to mirror the user turn.
+    // ---------------------------------------------------------------
+    it("injects synthetic user message with runId:prompt identity when caller passes no history", async () => {
+      dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mockClear();
+      const sdk = makeFakeSdk({
+        onCreateSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("done"));
+        },
+      });
+      const pool = makeFakePool(sdk);
+      const params = makeParams({
+        messages: [],
+        prompt: "what's my name?",
+        runId: "run-A",
+      } as never);
+
+      await runCopilotSdkAttempt(params, { pool });
+
+      const args = dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mock.calls[0]?.[0] as {
+        messages: Array<{
+          role: string;
+          content: unknown;
+          __openclaw?: { mirrorIdentity?: string };
+        }>;
+      };
+      expect(args.messages.length).toBe(2);
+      expect(args.messages[0]?.role).toBe("user");
+      expect(args.messages[0]?.content).toBe("what's my name?");
+      expect(args.messages[0]?.__openclaw?.mirrorIdentity).toBe("run-A:prompt");
+      expect(args.messages[1]?.role).toBe("assistant");
+      expect(args.messages[1]?.__openclaw?.mirrorIdentity).toBe("run-A:assistant:final");
+    });
+
+    it("does not duplicate synthetic user when caller passed the same prompt as the messages tail", async () => {
+      dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mockClear();
+      const sdk = makeFakeSdk({
+        onCreateSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("done"));
+        },
+      });
+      const pool = makeFakePool(sdk);
+      // Default makeParams() seeds messages with the same text as
+      // prompt, so the synthetic user should be suppressed and the
+      // mirrored payload should contain exactly one user entry.
+      await runCopilotSdkAttempt(makeParams(), { pool });
+
+      const args = dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mock.calls[0]?.[0] as {
+        messages: Array<{ role: string }>;
+      };
+      const userCount = args.messages.filter((m) => m.role === "user").length;
+      expect(userCount).toBe(1);
+    });
+
+    it("prefers transcriptPrompt over prompt for the synthetic user body", async () => {
+      dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mockClear();
+      const sdk = makeFakeSdk({
+        onCreateSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("done"));
+        },
+      });
+      const pool = makeFakePool(sdk);
+      const params = makeParams({
+        messages: [],
+        prompt: "EXPANDED: please answer with your real name",
+        transcriptPrompt: "what's your name?",
+        runId: "run-B",
+      } as never);
+
+      await runCopilotSdkAttempt(params, { pool });
+
+      const args = dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mock.calls[0]?.[0] as {
+        messages: Array<{ role: string; content: unknown }>;
+      };
+      const user = args.messages.find((m) => m.role === "user");
+      expect(user?.content).toBe("what's your name?");
+    });
+
+    it("two attempts that share the same sdkSessionId but differ by runId produce distinct user/assistant mirror identities", async () => {
+      // Simulates session reuse (Fix B): the SDK keeps `sess-1` across
+      // both turns, so a session-relative `${sdkSessionId}:user:0`
+      // identity would collide and drop the second turn's user message.
+      // The runId-stable identity scheme avoids that collision.
+      dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mockClear();
+      const sdk = makeFakeSdk({
+        onCreateSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("turn-1-reply"));
+        },
+        onResumeSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("turn-2-reply"));
+        },
+      });
+      const pool = makeFakePool(sdk);
+
+      await runCopilotSdkAttempt(
+        makeParams({
+          messages: [],
+          prompt: "turn 1",
+          runId: "run-1",
+        } as never),
+        { pool },
+      );
+      await runCopilotSdkAttempt(
+        makeParams({
+          messages: [],
+          prompt: "turn 2",
+          runId: "run-2",
+          initialReplayState: { sdkSessionId: "sess-1" },
+        } as never),
+        { pool },
+      );
+
+      const calls = dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mock.calls;
+      expect(calls.length).toBe(2);
+      const turn1 = calls[0]?.[0] as {
+        messages: Array<{ role: string; __openclaw?: { mirrorIdentity?: string } }>;
+      };
+      const turn2 = calls[1]?.[0] as {
+        messages: Array<{ role: string; __openclaw?: { mirrorIdentity?: string } }>;
+      };
+      const turn1User = turn1.messages.find((m) => m.role === "user");
+      const turn2User = turn2.messages.find((m) => m.role === "user");
+      const turn1Assistant = turn1.messages.find((m) => m.role === "assistant");
+      const turn2Assistant = turn2.messages.find((m) => m.role === "assistant");
+      expect(turn1User?.__openclaw?.mirrorIdentity).toBe("run-1:prompt");
+      expect(turn2User?.__openclaw?.mirrorIdentity).toBe("run-2:prompt");
+      expect(turn1Assistant?.__openclaw?.mirrorIdentity).toBe("run-1:assistant:final");
+      expect(turn2Assistant?.__openclaw?.mirrorIdentity).toBe("run-2:assistant:final");
+    });
+
+    it("two attempts with identical prompts but different runIds remain distinct (no content-fingerprint collapse)", async () => {
+      dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mockClear();
+      const sdk = makeFakeSdk({
+        onCreateSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("first"));
+        },
+        onResumeSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("second"));
+        },
+      });
+      const pool = makeFakePool(sdk);
+
+      await runCopilotSdkAttempt(
+        makeParams({ messages: [], prompt: "same question", runId: "run-X" } as never),
+        { pool },
+      );
+      await runCopilotSdkAttempt(
+        makeParams({
+          messages: [],
+          prompt: "same question",
+          runId: "run-Y",
+          initialReplayState: { sdkSessionId: "sess-1" },
+        } as never),
+        { pool },
+      );
+
+      const calls = dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mock.calls;
+      const id1 = (
+        calls[0]?.[0] as { messages: Array<{ role: string; __openclaw?: { mirrorIdentity?: string } }> }
+      ).messages.find((m) => m.role === "user")?.__openclaw?.mirrorIdentity;
+      const id2 = (
+        calls[1]?.[0] as { messages: Array<{ role: string; __openclaw?: { mirrorIdentity?: string } }> }
+      ).messages.find((m) => m.role === "user")?.__openclaw?.mirrorIdentity;
+      expect(id1).toBe("run-X:prompt");
+      expect(id2).toBe("run-Y:prompt");
+      expect(id1).not.toBe(id2);
     });
   });
 });

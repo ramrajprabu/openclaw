@@ -497,6 +497,180 @@ describe("createCopilotSdkAgentHarness", () => {
     expect(deleteSession).not.toHaveBeenCalled();
   });
 
+  describe("session reuse across turns (dogfood finding #4)", () => {
+    // These tests pin the harness's session-reuse contract: subsequent
+    // `runAttempt` calls within the same OpenClaw session should pass
+    // the tracked `sdkSessionId` to the attempt via `initialReplayState`
+    // so the SDK can `resumeSession` and keep its prompt cache + thread
+    // history warm. Compatibility-fingerprint mismatch (provider/model/
+    // cwd/auth) starts a fresh SDK session instead, and any caller-
+    // provided `replayInvalid: true` must survive untouched.
+
+    function makeAttemptParams(overrides: Record<string, unknown> = {}): any {
+      return {
+        provider: "github",
+        model: { provider: "github", id: "gpt-4.1" },
+        cwd: "/ws",
+        workspaceDir: "/ws",
+        agentDir: "/home",
+        copilotHome: "/copilot-home",
+        auth: { useLoggedInUser: true },
+        sessionId: "oc-sess-reuse",
+        ...overrides,
+      };
+    }
+
+    it("seeds initialReplayState.sdkSessionId from trackedSessions on the second turn", async () => {
+      const pool = makePoolMock();
+      const client = { deleteSession: vi.fn() } as any;
+      mocks.runCopilotSdkAttempt.mockImplementation(async (_params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: "sdk-sess-warm",
+          pooledClient: { key: {} as any, client },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt(makeAttemptParams({ runId: "t1" }));
+      await harness.runAttempt(makeAttemptParams({ runId: "t2" }));
+
+      expect(mocks.runCopilotSdkAttempt).toHaveBeenCalledTimes(2);
+      const secondCallParams = mocks.runCopilotSdkAttempt.mock.calls[1]?.[0] as {
+        initialReplayState?: { sdkSessionId?: string; replayInvalid?: boolean };
+      };
+      expect(secondCallParams.initialReplayState?.sdkSessionId).toBe("sdk-sess-warm");
+      // Must not synthesize a replayInvalid signal: undefined → resumable.
+      expect(secondCallParams.initialReplayState?.replayInvalid).toBeUndefined();
+    });
+
+    it("does not seed sdkSessionId on the first turn (nothing tracked yet)", async () => {
+      const pool = makePoolMock();
+      mocks.runCopilotSdkAttempt.mockImplementation(async (_params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: "sdk-sess-cold",
+          pooledClient: { key: {} as any, client: {} as any },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt(makeAttemptParams({ runId: "t1" }));
+
+      const firstCallParams = mocks.runCopilotSdkAttempt.mock.calls[0]?.[0] as {
+        initialReplayState?: { sdkSessionId?: string };
+      };
+      expect(firstCallParams.initialReplayState?.sdkSessionId).toBeUndefined();
+    });
+
+    it("does not seed when compatibility fingerprint differs (model change)", async () => {
+      const pool = makePoolMock();
+      mocks.runCopilotSdkAttempt.mockImplementation(async (_params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: "sdk-sess-gpt4",
+          pooledClient: { key: {} as any, client: {} as any },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt(
+        makeAttemptParams({ runId: "t1", model: { provider: "github", id: "gpt-4.1" } }),
+      );
+      await harness.runAttempt(
+        makeAttemptParams({ runId: "t2", model: { provider: "github", id: "claude-sonnet-4.5" } }),
+      );
+
+      const secondCallParams = mocks.runCopilotSdkAttempt.mock.calls[1]?.[0] as {
+        initialReplayState?: { sdkSessionId?: string };
+      };
+      expect(secondCallParams.initialReplayState?.sdkSessionId).toBeUndefined();
+    });
+
+    it("does not seed when compatibility fingerprint differs (auth rotation)", async () => {
+      const pool = makePoolMock();
+      mocks.runCopilotSdkAttempt.mockImplementation(async (_params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: "sdk-sess-auth1",
+          pooledClient: { key: {} as any, client: {} as any },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt(
+        makeAttemptParams({
+          runId: "t1",
+          auth: { profileId: "p1", profileVersion: "v1" },
+        }),
+      );
+      await harness.runAttempt(
+        makeAttemptParams({
+          runId: "t2",
+          auth: { profileId: "p1", profileVersion: "v2" },
+        }),
+      );
+
+      const secondCallParams = mocks.runCopilotSdkAttempt.mock.calls[1]?.[0] as {
+        initialReplayState?: { sdkSessionId?: string };
+      };
+      expect(secondCallParams.initialReplayState?.sdkSessionId).toBeUndefined();
+    });
+
+    it("preserves caller-provided initialReplayState.replayInvalid:true (does not overwrite)", async () => {
+      const pool = makePoolMock();
+      mocks.runCopilotSdkAttempt.mockImplementation(async (_params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: "sdk-sess-tracked",
+          pooledClient: { key: {} as any, client: {} as any },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt(makeAttemptParams({ runId: "t1" }));
+      await harness.runAttempt(
+        makeAttemptParams({
+          runId: "t2",
+          initialReplayState: { replayInvalid: true },
+        }),
+      );
+
+      const secondCallParams = mocks.runCopilotSdkAttempt.mock.calls[1]?.[0] as {
+        initialReplayState?: { sdkSessionId?: string; replayInvalid?: boolean };
+      };
+      // sdkSessionId is still injected from tracking, but replayInvalid
+      // must remain true so replay-shim treats this as create-not-resume.
+      expect(secondCallParams.initialReplayState?.sdkSessionId).toBe("sdk-sess-tracked");
+      expect(secondCallParams.initialReplayState?.replayInvalid).toBe(true);
+    });
+
+    it("updates the tracked session when onSessionEstablished reports a new sdkSessionId", async () => {
+      const pool = makePoolMock();
+      const deleteSession = vi.fn();
+      const client = { deleteSession } as any;
+      let nextSdkId = "sdk-sess-1";
+      mocks.runCopilotSdkAttempt.mockImplementation(async (_params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: nextSdkId,
+          pooledClient: { key: {} as any, client },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt(makeAttemptParams({ runId: "t1" }));
+      nextSdkId = "sdk-sess-2"; // Simulate downgraded resume → new SDK session.
+      await harness.runAttempt(makeAttemptParams({ runId: "t2" }));
+      await harness.reset?.({ sessionId: "oc-sess-reuse" });
+
+      expect(deleteSession).toHaveBeenCalledTimes(1);
+      // The newer sdkSessionId must be the one targeted by reset, not
+      // the stale first-turn id.
+      expect(deleteSession).toHaveBeenCalledWith("sdk-sess-2");
+    });
+  });
+
   describe("compact", () => {
     it("returns ok:false when sessionId is missing", async () => {
       const harness = createCopilotSdkAgentHarness({ pool: makePoolMock() });

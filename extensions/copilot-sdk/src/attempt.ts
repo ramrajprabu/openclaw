@@ -63,6 +63,12 @@ type AttemptParamsLike = AgentHarnessAttemptParams & {
   permissionPolicy?: CopilotSdkPermissionPolicy;
   profileVersion?: string;
   reasoningEffort?: "low" | "medium" | "high" | "xhigh";
+  // User-visible prompt body (when distinct from `prompt`, which may
+  // include runtime-expanded context). Used when synthesizing the
+  // current-turn user message for the OpenClaw audit transcript so
+  // dashboard/CLI history shows what the user actually typed, not the
+  // internal expansion. Symmetric to `EmbeddedRunAttemptParams.transcriptPrompt`.
+  transcriptPrompt?: string;
   userInputPolicy?: CopilotSdkUserInputPolicy;
 };
 type ModelRef = { api?: string; id: string; provider: string };
@@ -298,7 +304,41 @@ export async function runCopilotSdkAttempt(
   const snap = bridge?.snapshot();
   const assistantTexts = bridge?.finalizeAssistantTexts() ?? [];
   const lastAssistant = bridge?.buildAssistantMessage({ modelRef, now });
-  const messagesSnapshot = lastAssistant ? [...messages, lastAssistant] : [...messages];
+
+  // Dogfood finding #3 (mirror codex parity):
+  //
+  // Without this synthesis the OpenClaw audit transcript never sees
+  // the user's prompt for a copilot-sdk attempt. The shell's
+  // `persistTextTurnTranscript` skips the user write when
+  // `embeddedAssistantGapFill` is true (its `body` arrives as ""),
+  // trusting the harness to mirror it. Codex does exactly this in
+  // `event-projector.ts:262` by prepending
+  // `{role:"user", content:params.prompt, ...}` tagged `${turnId}:prompt`.
+  // We mirror that pattern with `${runId}:prompt` as the turn-stable
+  // identity so re-mirror of the same turn is a true no-op AND two
+  // turns sharing the same SDK session produce distinct dedupe keys
+  // (the latter matters once session reuse lands in harness.ts).
+  //
+  // Defensive guard: if the caller already passed the same user turn
+  // as the tail of `messages`, skip synthesis to avoid double-writing
+  // the user message.
+  const syntheticUserText = readString(input.transcriptPrompt) ?? readString(input.prompt);
+  const tailUserText = readTailUserText(messages);
+  const syntheticUser: AgentMessage | undefined =
+    syntheticUserText && syntheticUserText !== tailUserText
+      ? attachCopilotSdkMirrorIdentity(
+          { role: "user", content: syntheticUserText, timestamp: now() } as AgentMessage,
+          `${input.runId}:prompt`,
+        )
+      : undefined;
+  const taggedLastAssistant = lastAssistant
+    ? attachCopilotSdkMirrorIdentity(lastAssistant, `${input.runId}:assistant:final`)
+    : undefined;
+  const messagesSnapshot: AgentMessage[] = [
+    ...messages,
+    ...(syntheticUser ? [syntheticUser] : []),
+    ...(taggedLastAssistant ? [taggedLastAssistant] : []),
+  ];
 
   // Best-effort dual-write: mirror this attempt's full message snapshot
   // (user/assistant/toolResult) into the OpenClaw audit transcript at
@@ -317,6 +357,18 @@ export async function runCopilotSdkAttempt(
         message.role !== "assistant" &&
         message.role !== "toolResult"
       ) {
+        return message;
+      }
+      // Preserve any caller-attached (or upstream-attached) mirror
+      // identity — especially the `${runId}:prompt` /
+      // `${runId}:assistant:final` identities attached above — so the
+      // dedupe key stays turn-stable. Falling back to a per-attempt
+      // positional identity here is only safe for messages that don't
+      // already carry a logical identity; with SDK session reuse the
+      // positional scheme would collapse turn 2's index-0 user onto
+      // turn 1's index-0 user inside the same `${sdkSessionId}`
+      // scope. See replay-shim.ts + harness.ts session-reuse path.
+      if (hasMirrorIdentity(message)) {
         return message;
       }
       const identityScope = sdkSessionId ?? sessionIdForScope ?? "attempt";
@@ -497,6 +549,51 @@ function createSessionConfig(
 
 function getMessagesSnapshotInput(params: AttemptParamsLike): AgentMessage[] {
   return Array.isArray(params.messages) ? [...params.messages] : [];
+}
+
+// Returns the trimmed plain-text content of the tail user message in
+// `messages`, if any. Used to skip synthetic-user injection when the
+// caller already passed the current turn's user prompt as the last
+// entry of `params.messages`, which would otherwise produce a duplicate
+// user record in the audit transcript.
+function readTailUserText(messages: AgentMessage[]): string | undefined {
+  const tail = messages[messages.length - 1];
+  if (!tail || tail.role !== "user") {
+    return undefined;
+  }
+  const content = (tail as { content?: unknown }).content;
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (part && typeof part === "object" && (part as { type?: unknown }).type === "text") {
+        const text = (part as { text?: unknown }).text;
+        if (typeof text === "string" && text.length > 0) {
+          return text;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+// True when an AgentMessage already carries a stable mirror identity
+// (e.g. the `${runId}:prompt` / `${runId}:assistant:final` identities
+// attached in attempt.ts before the dual-write, or any caller-attached
+// identity from a prior turn). Keep this in sync with the
+// MIRROR_IDENTITY_META_KEY constant in dual-write-transcripts.ts; we
+// duplicate the read here instead of importing the helper to avoid
+// widening the module's public surface for what is otherwise a pure
+// guard. See attempt.ts dual-write tagging block.
+function hasMirrorIdentity(message: AgentMessage): boolean {
+  const record = message as unknown as { __openclaw?: unknown };
+  const meta = record.__openclaw;
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+    return false;
+  }
+  const id = (meta as Record<string, unknown>).mirrorIdentity;
+  return typeof id === "string" && id.length > 0;
 }
 
 function readSessionId(session: SessionLike | undefined): string | undefined {

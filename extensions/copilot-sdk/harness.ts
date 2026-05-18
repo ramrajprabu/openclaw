@@ -28,6 +28,53 @@ export interface CreateCopilotSdkAgentHarnessOptions {
 interface TrackedSession {
   sdkSessionId: string;
   client: CopilotClient;
+  // Compatibility fingerprint of the params that created the SDK
+  // session. We only reuse the tracked SDK session when the next
+  // attempt's fingerprint matches — different provider/model/cwd/auth
+  // configurations should start a fresh SDK session rather than resume
+  // one bound to incompatible state. Mismatch falls back to
+  // `createSession` (no resume injection) and the new sdkSessionId
+  // replaces this entry via `onSessionEstablished`.
+  compatKey: string;
+}
+
+// Build a string fingerprint of the attempt params that must agree
+// across turns for SDK-session reuse to be safe. Keep this list
+// conservative: any field whose change would invalidate the SDK
+// session's bound state belongs here. Token / auth profile rotation
+// produces a new fingerprint so we don't replay a session against a
+// stale credential.
+function computeSessionCompatKey(params: AgentHarnessAttemptParams): string {
+  const p = params as AgentHarnessAttemptParams & {
+    auth?: {
+      gitHubToken?: string;
+      profileId?: string;
+      profileVersion?: string;
+      useLoggedInUser?: boolean;
+    };
+    copilotHome?: string;
+    cwd?: string;
+    model?: string | { api?: string; id?: string; provider?: string };
+    profileVersion?: string;
+  };
+  const modelObj: { api?: string; id?: string; provider?: string } =
+    p.model && typeof p.model === "object"
+      ? p.model
+      : { id: typeof p.model === "string" ? p.model : undefined };
+  const auth = p.auth ?? {};
+  const parts = [
+    `provider=${String(modelObj.provider ?? "")}`,
+    `model=${String(modelObj.id ?? "")}`,
+    `api=${String(modelObj.api ?? "")}`,
+    `cwd=${String(p.cwd ?? p.workspaceDir ?? "")}`,
+    `agentDir=${String(p.agentDir ?? "")}`,
+    `copilotHome=${String(p.copilotHome ?? "")}`,
+    `auth.profileId=${String(auth.profileId ?? "")}`,
+    `auth.profileVersion=${String(auth.profileVersion ?? p.profileVersion ?? "")}`,
+    `auth.loggedInUser=${auth.useLoggedInUser ? "1" : "0"}`,
+    `auth.hasToken=${auth.gitHubToken ? "1" : "0"}`,
+  ];
+  return parts.join("|");
 }
 
 export function createCopilotSdkAgentHarness(
@@ -90,7 +137,42 @@ export function createCopilotSdkAgentHarness(
       const { runCopilotSdkAttempt } = await import("./src/attempt.js");
       const pool = await getPool();
       const openclawSessionId = typeof params.sessionId === "string" ? params.sessionId : undefined;
-      const attemptPromise = runCopilotSdkAttempt(params, {
+
+      // Dogfood finding #4: reuse the SDK session across turns within
+      // the same OpenClaw session so that the Copilot SDK's prompt
+      // cache, tool-call history, and any server-side compaction state
+      // survive turn boundaries. Without this, every turn called
+      // `createSession()` and lost cache + thread continuity — the
+      // smoking gun was distinct `${sdkSessionId}` scopes per turn in
+      // the playground transcript.
+      //
+      // Safety:
+      //   - Only inject when the tracked compatKey still matches the
+      //     current attempt's fingerprint (provider/model/cwd/auth).
+      //     Mismatch falls through to `createSession` and the new SDK
+      //     session replaces the tracked entry below.
+      //   - Preserve any caller-provided `replayInvalid: true` — never
+      //     downgrade an orchestrator-issued safety signal to false.
+      //     `decideReplayAction` treats undefined as resumable already.
+      //   - On resume failure, `attempt.ts` recovers via the
+      //     `replay-shim` (`resumeFailureRecovered:true`) and falls
+      //     back to `createSession`, so a stale-session error never
+      //     surfaces as a prompt error.
+      const currentCompatKey = computeSessionCompatKey(params);
+      const tracked = openclawSessionId ? trackedSessions.get(openclawSessionId) : undefined;
+      const resumableSessionId =
+        tracked && tracked.compatKey === currentCompatKey ? tracked.sdkSessionId : undefined;
+      const effectiveParams: AgentHarnessAttemptParams = resumableSessionId
+        ? ({
+            ...params,
+            initialReplayState: {
+              ...(params.initialReplayState ?? {}),
+              sdkSessionId: resumableSessionId,
+            },
+          } as AgentHarnessAttemptParams)
+        : params;
+
+      const attemptPromise = runCopilotSdkAttempt(effectiveParams, {
         pool,
         onSessionEstablished: openclawSessionId
           ? ({
@@ -103,6 +185,7 @@ export function createCopilotSdkAgentHarness(
               trackedSessions.set(openclawSessionId, {
                 sdkSessionId,
                 client: pooledClient.client,
+                compatKey: currentCompatKey,
               });
             }
           : undefined,
