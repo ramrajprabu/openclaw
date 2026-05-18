@@ -143,7 +143,11 @@ Root `package.json` and `pnpm-workspace.yaml` are unchanged; only the
 root `pnpm-lock.yaml` updates to include the new workspace package's
 resolutions (standard lockfile churn when a workspace package is added).
 
-- Phase 0 spike workspace: `qa/copilot-sdk-spike/` (see implementation note in §3.7).
+- Phase 0 spike workspace: archived in the
+  [agent-execution-tracker](https://github.com/ramrajprabu/agent-execution-tracker)
+  under `projects/openclaw-copilot-sdk-harness/spike/` (originally
+  shipped at `qa/copilot-sdk-spike/` on commit `4af88839b8`; see
+  implementation note in §3.7).
 
 ### 3.4 Tool-policy duplication is intentional
 
@@ -198,7 +202,7 @@ Three short phases. All sequential at the gate level; PRs within a phase can lan
 ### Phase 0 — Discovery & spike
 
 - Read `node_modules/@github/copilot-sdk` `.d.ts` after install, plus the Cookbook, and produce a short `qa/copilot-sdk-capabilities.md` listing: lifecycle methods, event types, tool/permission/user-input contracts, infiniteSessions behavior, BYOK shape.
-- Stand up `apps/copilot-sdk-spike/` (excluded from build/dist) that runs a one-turn session with one custom tool. Confirms the shape before touching production code.
+- Stand up a standalone spike workspace (excluded from build/dist) that runs a one-turn session with one custom tool. Confirms the shape before touching production code. (Originally at `qa/copilot-sdk-spike/` on commit `4af88839b8`; archived after Phase 3 in `agent-execution-tracker:projects/openclaw-copilot-sdk-harness/spike/` — see §3.7.)
 - Capture baseline `pnpm test src/agents` duration + RSS per `src/agents/AGENTS.md` perf rules (so the new module's overhead is measurable, not assumed).
 
 Exit: capability doc + working spike.
@@ -247,7 +251,7 @@ There is **no Phase 4 retiring PI**. PI stays.
 Each item is sized for one PR. IDs match the SQL todo table.
 
 1. `sdk-capability-doc` — `qa/copilot-sdk-capabilities.md` from `.d.ts` + Cookbook.
-2. `spike-app` — `qa/copilot-sdk-spike/`, excluded from build.
+2. `spike-app` — Phase 0 spike workspace (originally `qa/copilot-sdk-spike/`, excluded from build); archived in `agent-execution-tracker:projects/openclaw-copilot-sdk-harness/spike/` after Phase 3.
 3. `add-sdk-dep` — scaffold `extensions/copilot-sdk/` workspace package (mirroring `extensions/codex/`): `package.json` declaring `@github/copilot-sdk@1.0.0-beta.4` as the extension's own dep plus `@openclaw/plugin-sdk: workspace:*`; minimal `openclaw.plugin.json`; placeholder `index.ts`. Root `package.json` and `pnpm-workspace.yaml` UNCHANGED; root `pnpm-lock.yaml` updates with the new workspace package's resolutions.
 4. `runtime-pool` — `extensions/copilot-sdk/src/runtime.ts` pooled `CopilotClient` per `copilotHome`.
 5. `attempt-bridge` — `extensions/copilot-sdk/src/attempt.ts` implementing `runCopilotSdkAttempt`.
