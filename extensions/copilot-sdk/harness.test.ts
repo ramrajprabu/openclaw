@@ -1,3 +1,6 @@
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CopilotClientPool } from "./harness.js";
 import { createCopilotSdkAgentHarness } from "./harness.js";
@@ -485,5 +488,137 @@ describe("createCopilotSdkAgentHarness", () => {
     await harness.reset?.({ sessionId: "oc-disp" });
 
     expect(deleteSession).not.toHaveBeenCalled();
+  });
+
+  describe("compact", () => {
+    it("returns ok:false when sessionId is missing", async () => {
+      const harness = createCopilotSdkAgentHarness({ pool: makePoolMock() });
+      const result = await harness.compact?.({ workspaceDir: "/ws" } as any);
+      expect(result).toEqual({
+        ok: false,
+        compacted: false,
+        reason: "missing-required-params",
+      });
+    });
+
+    it("returns ok:false when workspaceDir is missing", async () => {
+      const harness = createCopilotSdkAgentHarness({ pool: makePoolMock() });
+      const result = await harness.compact?.({ sessionId: "s" } as any);
+      expect(result).toEqual({
+        ok: false,
+        compacted: false,
+        reason: "missing-required-params",
+      });
+    });
+
+    it("writes an OpenClaw marker under <workspaceDir>/files and returns ok:true,compacted:false", async () => {
+      const workspaceDir = await mkdtemp(join(tmpdir(), "copilot-sdk-harness-compact-"));
+      try {
+        const harness = createCopilotSdkAgentHarness({ pool: makePoolMock() });
+        const result = await harness.compact?.({
+          sessionId: "oc-sess-compact-1",
+          workspaceDir,
+          trigger: "budget",
+          currentTokenCount: 12345,
+        } as any);
+
+        expect(result).toEqual({
+          ok: true,
+          compacted: false,
+          reason: "deferred-to-sdk-infinite-sessions",
+        });
+
+        const files = await readdir(join(workspaceDir, "files"));
+        const marker = files.find((f) => f.startsWith("openclaw-compaction-"));
+        expect(marker).toBeDefined();
+        expect(marker).toMatch(/openclaw-compaction-\d+-oc-sess-compact-1\.json/);
+        const contents = JSON.parse(await readFile(join(workspaceDir, "files", marker!), "utf8"));
+        expect(contents).toMatchObject({
+          version: 1,
+          source: "copilot-sdk-harness",
+          sessionId: "oc-sess-compact-1",
+          compacted: false,
+          trigger: "budget",
+          currentTokenCount: 12345,
+          reason: "deferred-to-sdk-infinite-sessions",
+        });
+      } finally {
+        await rm(workspaceDir, { recursive: true, force: true });
+      }
+    });
+
+    it("records the tracked sdkSessionId in the marker when an attempt has run", async () => {
+      const workspaceDir = await mkdtemp(join(tmpdir(), "copilot-sdk-harness-compact-tracked-"));
+      try {
+        const pool = makePoolMock();
+        mocks.runCopilotSdkAttempt.mockImplementation(async (params, deps) => {
+          deps.onSessionEstablished?.({
+            sdkSessionId: "sdk-sess-tracked",
+            pooledClient: { key: {} as any, client: { deleteSession: vi.fn() } as any },
+          });
+          return ATTEMPT_RESULT;
+        });
+        const harness = createCopilotSdkAgentHarness({ pool });
+
+        await harness.runAttempt({ ...ATTEMPT_PARAMS, sessionId: "oc-sess-tracked" } as any);
+        await harness.compact?.({
+          sessionId: "oc-sess-tracked",
+          workspaceDir,
+          trigger: "manual",
+        } as any);
+
+        const files = await readdir(join(workspaceDir, "files"));
+        const marker = files.find((f) => f.startsWith("openclaw-compaction-"))!;
+        const contents = JSON.parse(await readFile(join(workspaceDir, "files", marker), "utf8"));
+        expect(contents.sdkSessionId).toBe("sdk-sess-tracked");
+      } finally {
+        await rm(workspaceDir, { recursive: true, force: true });
+      }
+    });
+
+    it("records force:true in the marker and surfaces a force-specific reason", async () => {
+      const workspaceDir = await mkdtemp(join(tmpdir(), "copilot-sdk-harness-compact-force-"));
+      try {
+        const harness = createCopilotSdkAgentHarness({ pool: makePoolMock() });
+        const result = await harness.compact?.({
+          sessionId: "oc-sess-force",
+          workspaceDir,
+          force: true,
+        } as any);
+
+        expect(result).toEqual({
+          ok: true,
+          compacted: false,
+          reason: "force-requested-but-sdk-has-no-synchronous-compact-api",
+        });
+
+        const files = await readdir(join(workspaceDir, "files"));
+        const marker = files.find((f) => f.startsWith("openclaw-compaction-"))!;
+        const contents = JSON.parse(await readFile(join(workspaceDir, "files", marker), "utf8"));
+        expect(contents.force).toBe(true);
+        expect(contents.reason).toBe("force-requested-but-sdk-has-no-synchronous-compact-api");
+      } finally {
+        await rm(workspaceDir, { recursive: true, force: true });
+      }
+    });
+
+    it("returns ok:false with structured failure when the marker write throws", async () => {
+      const harness = createCopilotSdkAgentHarness({ pool: makePoolMock() });
+      // Use a path with a NUL character which Node rejects synchronously
+      // on every platform, simulating a write failure that the harness
+      // must convert into a structured failure instead of throwing.
+      const badWorkspace = "/this\u0000is/illegal";
+      const result = await harness.compact?.({
+        sessionId: "oc-sess-bad",
+        workspaceDir: badWorkspace,
+      } as any);
+
+      expect(result?.ok).toBe(false);
+      expect(result?.compacted).toBe(false);
+      expect(result?.reason).toBe("marker-write-failed");
+      expect(result?.failure?.reason).toBe("marker-write-failed");
+      expect(typeof result?.failure?.rawError).toBe("string");
+      expect(result?.failure?.rawError?.length ?? 0).toBeGreaterThan(0);
+    });
   });
 });

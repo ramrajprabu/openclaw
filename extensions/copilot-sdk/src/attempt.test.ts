@@ -655,6 +655,78 @@ describe("runCopilotSdkAttempt", () => {
     expect(cfg.enableSessionTelemetry).toBe(false);
   });
 
+  it("infiniteSessions is omitted from createSession when host did not supply config", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+
+    await runCopilotSdkAttempt(makeParams(), { pool });
+
+    const cfg = sdk.createSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect("infiniteSessions" in cfg).toBe(false);
+  });
+
+  it("infiniteSessions config is propagated to createSession when host supplies it", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+
+    await runCopilotSdkAttempt(
+      makeParams({
+        infiniteSessionConfig: {
+          enabled: true,
+          backgroundCompactionThreshold: 0.7,
+          bufferExhaustionThreshold: 0.9,
+        },
+      } as never),
+      { pool },
+    );
+
+    const cfg = sdk.createSession.mock.calls[0]?.[0] as {
+      infiniteSessions?: Record<string, unknown>;
+    };
+    expect(cfg.infiniteSessions).toEqual({
+      enabled: true,
+      backgroundCompactionThreshold: 0.7,
+      bufferExhaustionThreshold: 0.9,
+    });
+  });
+
+  it("infiniteSessions enabled:false explicitly disables infinite sessions", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+
+    await runCopilotSdkAttempt(makeParams({ infiniteSessionConfig: { enabled: false } } as never), {
+      pool,
+    });
+
+    const cfg = sdk.createSession.mock.calls[0]?.[0] as {
+      infiniteSessions?: Record<string, unknown>;
+    };
+    expect(cfg.infiniteSessions).toEqual({ enabled: false });
+  });
+
+  it("infiniteSessions is propagated to resumeSession on resume path", async () => {
+    const sdk = makeFakeSdk({
+      onResumeSession: (session) => {
+        session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("resumed"));
+      },
+    });
+    const pool = makeFakePool(sdk);
+
+    await runCopilotSdkAttempt(
+      makeParams({
+        infiniteSessionConfig: { backgroundCompactionThreshold: 0.5 },
+        initialReplayState: { sdkSessionId: "resume-3" },
+      } as never),
+      { pool },
+    );
+
+    expect(sdk.resumeSession).toHaveBeenCalledTimes(1);
+    const cfg = sdk.resumeSession.mock.calls[0]?.[1] as {
+      infiniteSessions?: Record<string, unknown>;
+    };
+    expect(cfg.infiniteSessions).toEqual({ backgroundCompactionThreshold: 0.5 });
+  });
+
   it("timeout", async () => {
     const sdk = makeFakeSdk({
       onCreateSession: (session) => {

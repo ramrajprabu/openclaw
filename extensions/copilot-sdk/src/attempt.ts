@@ -6,6 +6,10 @@ import type {
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { resolveCopilotAuth } from "./auth-bridge.js";
 import {
+  createInfiniteSessionConfig,
+  type CopilotSdkInfiniteSessionOptions,
+} from "./compaction-bridge.js";
+import {
   attachEventBridge,
   type AssistantMessage,
   type AssistantUsageSnapshot,
@@ -47,6 +51,7 @@ type AttemptParamsLike = AgentHarnessAttemptParams & {
   cwd?: string;
   enableSessionTelemetry?: boolean;
   hooksConfig?: CopilotSdkHooksConfig;
+  infiniteSessionConfig?: CopilotSdkInfiniteSessionOptions;
   initialReplayState?: AgentHarnessAttemptParams["initialReplayState"] & { sdkSessionId?: string };
   messages?: AgentMessage[];
   model?: string | { api?: string; id?: string; provider?: string };
@@ -390,6 +395,7 @@ function createSessionConfig(
   SessionConfig,
   | "enableSessionTelemetry"
   | "hooks"
+  | "infiniteSessions"
   | "model"
   | "onPermissionRequest"
   | "onUserInputRequest"
@@ -400,6 +406,7 @@ function createSessionConfig(
   const permissionPolicy = params.permissionPolicy ?? rejectAllPolicy;
   const userInputPolicy = params.userInputPolicy ?? denyAllUserInputPolicy;
   const hooks = createHooksBridge(params.hooksConfig);
+  const infiniteSessions = createInfiniteSessionConfig(params.infiniteSessionConfig);
   return {
     model: sdkModelId,
     // Permission decisions flow through permission-bridge. The default
@@ -427,6 +434,11 @@ function createSessionConfig(
     ...(typeof params.enableSessionTelemetry === "boolean"
       ? { enableSessionTelemetry: params.enableSessionTelemetry }
       : {}),
+    // Infinite sessions / background compaction: only attach when the
+    // host provided an InfiniteSessionConfig. SDK defaults
+    // (`enabled: true`, background 0.80, buffer 0.95) apply when
+    // omitted. See compaction-bridge.ts.
+    ...(infiniteSessions ? { infiniteSessions } : {}),
     reasoningEffort: params.reasoningEffort,
     tools: sdkTools,
     workingDirectory: readString(params.workspaceDir) ?? readString(params.cwd),

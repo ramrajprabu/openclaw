@@ -3,8 +3,11 @@ import type {
   AgentHarness,
   AgentHarnessAttemptParams,
   AgentHarnessAttemptResult,
+  AgentHarnessCompactParams,
+  AgentHarnessCompactResult,
   AgentHarnessResetParams,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { writeOpenClawCompactionMarker } from "./src/compaction-bridge.js";
 import type { CopilotClientPool, CopilotClientPoolOptions, PooledClient } from "./src/runtime.js";
 
 export type { CopilotClientPool, CopilotClientPoolOptions };
@@ -129,6 +132,61 @@ export function createCopilotSdkAgentHarness(
         // registry already logs broadcast reset failures; swallow here
         // so one harness cannot block the reset broadcast.
       }
+    },
+
+    async compact(
+      params: AgentHarnessCompactParams,
+    ): Promise<AgentHarnessCompactResult | undefined> {
+      // The Copilot SDK manages compaction automatically via
+      // `SessionConfig.infiniteSessions` (background-async when
+      // utilization crosses `backgroundCompactionThreshold`). There is
+      // no synchronous compact RPC, so the harness cannot honour
+      // `params.force === true` directly. Instead this method writes
+      // an OpenClaw-shaped marker file under
+      // `<workspaceDir>/files/openclaw-compaction-<ts>-<sessionId>.json`
+      // so existing OpenClaw transcript readers see a familiar
+      // compaction artifact when the host calls compact(). See
+      // src/compaction-bridge.ts for the bridge boundary.
+      const openclawSessionId = typeof params.sessionId === "string" ? params.sessionId : undefined;
+      const workspaceDir =
+        typeof params.workspaceDir === "string" ? params.workspaceDir : undefined;
+      if (!openclawSessionId || !workspaceDir) {
+        return {
+          ok: false,
+          compacted: false,
+          reason: "missing-required-params",
+        };
+      }
+      const tracked = trackedSessions.get(openclawSessionId);
+      const reason = params.force
+        ? "force-requested-but-sdk-has-no-synchronous-compact-api"
+        : "deferred-to-sdk-infinite-sessions";
+      try {
+        await writeOpenClawCompactionMarker({
+          sessionId: openclawSessionId,
+          workspaceDir,
+          trigger: params.trigger,
+          currentTokenCount: params.currentTokenCount,
+          sdkSessionId: tracked?.sdkSessionId,
+          force: params.force,
+          reason,
+        });
+      } catch (err) {
+        return {
+          ok: false,
+          compacted: false,
+          reason: "marker-write-failed",
+          failure: {
+            reason: "marker-write-failed",
+            rawError: err instanceof Error ? err.message : String(err),
+          },
+        };
+      }
+      return {
+        ok: true,
+        compacted: false,
+        reason,
+      };
     },
 
     async dispose() {
