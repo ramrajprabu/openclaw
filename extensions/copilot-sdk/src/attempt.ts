@@ -10,6 +10,10 @@ import {
   type CopilotSdkInfiniteSessionOptions,
 } from "./compaction-bridge.js";
 import {
+  attachCopilotSdkMirrorIdentity,
+  dualWriteCopilotSdkTranscriptBestEffort,
+} from "./dual-write-transcripts.js";
+import {
   attachEventBridge,
   type AssistantMessage,
   type AssistantUsageSnapshot,
@@ -295,6 +299,49 @@ export async function runCopilotSdkAttempt(
   const assistantTexts = bridge?.finalizeAssistantTexts() ?? [];
   const lastAssistant = bridge?.buildAssistantMessage({ modelRef, now });
   const messagesSnapshot = lastAssistant ? [...messages, lastAssistant] : [...messages];
+
+  // Best-effort dual-write: mirror this attempt's full message snapshot
+  // (user/assistant/toolResult) into the OpenClaw audit transcript at
+  // params.sessionFile, alongside the SDK's own session storage. The
+  // OpenClaw shell (attempt-execution.ts) writes only the user prompt
+  // and terminal assistant text; mirroring here captures intermediate
+  // tool calls/results for full audit/replay parity with the codex
+  // extension. Identity-tagged so re-emits dedupe. Errors are
+  // swallowed so a mirror failure cannot break the attempt.
+  const sessionFileForMirror = readString(input.sessionFile);
+  const sessionIdForScope = sessionIdUsed ?? readString(input.sessionId);
+  if (sessionFileForMirror && messagesSnapshot.length > 0) {
+    const taggedMessages = messagesSnapshot.map((message, index) => {
+      if (
+        message.role !== "user" &&
+        message.role !== "assistant" &&
+        message.role !== "toolResult"
+      ) {
+        return message;
+      }
+      const identityScope = sdkSessionId ?? sessionIdForScope ?? "attempt";
+      return attachCopilotSdkMirrorIdentity(message, `${identityScope}:${message.role}:${index}`);
+    });
+    await dualWriteCopilotSdkTranscriptBestEffort({
+      sessionFile: sessionFileForMirror,
+      sessionKey: readString((input as { sessionKey?: unknown }).sessionKey),
+      agentId: readString(input.agentId),
+      messages: taggedMessages,
+      idempotencyScope: sessionIdForScope ? `copilot-sdk:${sessionIdForScope}` : undefined,
+      config: (input as { config?: unknown }).config as never,
+    }).catch((mirrorError: unknown) => {
+      // Defense-in-depth: the best-effort wrapper already swallows
+      // mirror failures, but we double-guard here so any future
+      // signature change or unexpected rejection cannot break the
+      // attempt result. The SDK's own session storage remains
+      // authoritative; only the OpenClaw audit transcript would be
+      // missing intermediate messages for this turn.
+      console.warn(
+        "[copilot-sdk-attempt] dual-write transcript wrapper rejected unexpectedly",
+        mirrorError,
+      );
+    });
+  }
 
   return createResult(input, {
     aborted,

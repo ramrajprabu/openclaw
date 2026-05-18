@@ -7,6 +7,23 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCopilotSdkAttempt } from "./attempt.js";
 import type { CopilotClientPool } from "./runtime.js";
 
+// Mock the dual-write transcript mirror so attempt tests do not touch the
+// real filesystem. The mirror call site is exercised separately in
+// dual-write-transcripts.test.ts and by the dedicated attempt
+// dual-write tests below; the mocked module here just captures the
+// invocation arguments without writing to disk.
+const dualWriteMock = vi.hoisted(() => ({
+  dualWriteCopilotSdkTranscriptBestEffort: vi.fn().mockResolvedValue(undefined),
+  attachCopilotSdkMirrorIdentity: <T>(message: T, identity: string): T => {
+    const record = message as unknown as Record<string, unknown>;
+    return {
+      ...record,
+      __openclaw: { ...(record.__openclaw as object | undefined), mirrorIdentity: identity },
+    } as unknown as T;
+  },
+}));
+vi.mock("./dual-write-transcripts.js", () => dualWriteMock);
+
 type SessionEventShape = {
   data: Record<string, unknown>;
   id: string;
@@ -937,5 +954,97 @@ describe("runCopilotSdkAttempt", () => {
     expect(key.authProfileVersion).toBe("v1");
     expect(options.gitHubToken).toBe("token");
     expect(options.useLoggedInUser).toBe(false);
+  });
+
+  describe("dual-write transcript mirror", () => {
+    afterEach(() => {
+      dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mockClear();
+      dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mockResolvedValue(undefined);
+    });
+
+    it("invokes dual-write mirror with sessionFile and scoped idempotencyScope when sessionFile is set", async () => {
+      dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mockClear();
+      const sdk = makeFakeSdk({
+        onCreateSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("done"));
+        },
+      });
+      const pool = makeFakePool(sdk);
+
+      await runCopilotSdkAttempt(makeParams(), { pool });
+
+      expect(dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort).toHaveBeenCalledTimes(1);
+      const args = dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mock.calls[0]?.[0] as {
+        sessionFile: string;
+        messages: Array<{ role: string }>;
+        idempotencyScope?: string;
+      };
+      expect(args.sessionFile).toBe("session.json");
+      expect(args.idempotencyScope).toMatch(/^copilot-sdk:/u);
+      expect(args.messages.length).toBeGreaterThan(0);
+      const roles = args.messages.map((m) => m.role);
+      expect(roles).toContain("user");
+      expect(roles).toContain("assistant");
+    });
+
+    it("does not invoke dual-write mirror when sessionFile is absent", async () => {
+      dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mockClear();
+      const sdk = makeFakeSdk({
+        onCreateSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("done"));
+        },
+      });
+      const pool = makeFakePool(sdk);
+      const params = makeParams() as unknown as Record<string, unknown>;
+      delete params.sessionFile;
+
+      await runCopilotSdkAttempt(params as never, { pool });
+
+      expect(dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort).not.toHaveBeenCalled();
+    });
+
+    it("tags mirrored messages with copilot-sdk mirror identity per role and position", async () => {
+      dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mockClear();
+      const sdk = makeFakeSdk({
+        onCreateSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("done"));
+        },
+      });
+      const pool = makeFakePool(sdk);
+
+      await runCopilotSdkAttempt(makeParams(), { pool });
+
+      const args = dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mock.calls[0]?.[0] as {
+        messages: Array<{ role: string; __openclaw?: { mirrorIdentity?: string } }>;
+      };
+      for (const [index, message] of args.messages.entries()) {
+        if (
+          message.role === "user" ||
+          message.role === "assistant" ||
+          message.role === "toolResult"
+        ) {
+          expect(message.__openclaw?.mirrorIdentity).toMatch(
+            new RegExp(`:${message.role}:${index}$`, "u"),
+          );
+        }
+      }
+    });
+
+    it("dual-write failure does not surface from runCopilotSdkAttempt", async () => {
+      dualWriteMock.dualWriteCopilotSdkTranscriptBestEffort.mockRejectedValueOnce(
+        new Error("mirror boom"),
+      );
+      const sdk = makeFakeSdk({
+        onCreateSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("done"));
+        },
+      });
+      const pool = makeFakePool(sdk);
+
+      // dualWriteCopilotSdkTranscriptBestEffort is already best-effort
+      // internally; this test asserts attempt.ts also awaits it without
+      // letting an unexpected rejection escape.
+      await expect(runCopilotSdkAttempt(makeParams(), { pool })).resolves.toBeDefined();
+    });
   });
 });
