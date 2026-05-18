@@ -135,6 +135,6 @@ describe("copilot-sdk plugin", () => {
     registerWithPluginConfig({ pool: { idleTtlMs: 0 } });
 
     expect(createHarness).toHaveBeenNthCalledWith(1, { poolOptions: { idleTtlMs: 2500 } });
-    expect(createHarness.mock.calls[1]?.[0]).toEqual({});
+    expect(createHarness.mock.calls[1]?.[0]).toBeUndefined();
   });
 });
