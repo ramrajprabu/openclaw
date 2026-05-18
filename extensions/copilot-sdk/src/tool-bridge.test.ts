@@ -229,6 +229,19 @@ describe("convertOpenClawToolToSdkTool", () => {
     expect(Object.hasOwn(result, "skipPermission")).toBe(false);
   });
 
+  it("marks every bridged tool as overridesBuiltInTool so OpenClaw owns names that collide with Copilot CLI built-ins (edit/read/write/bash/...)", () => {
+    // Real-world dogfood found that openclaw's createOpenClawCodingTools
+    // returns a tool named `edit`, which the bundled Copilot CLI also ships
+    // as a built-in. The SDK rejects the registration unless the external
+    // tool is explicitly marked as an override.
+    for (const name of ["edit", "read", "write", "bash", "live_echo"]) {
+      const result = convertOpenClawToolToSdkTool(makeTool({ name }), {}) as SdkTool & {
+        overridesBuiltInTool?: boolean;
+      };
+      expect(result.overridesBuiltInTool).toBe(true);
+    }
+  });
+
   it("returns a failure result when the signal is already aborted", async () => {
     const controller = new AbortController();
     controller.abort();

@@ -187,6 +187,15 @@ export function convertOpenClawToolToSdkTool(
     description: sourceTool.description,
     handler,
     name: sourceTool.name,
+    // OpenClaw owns its bridged tools by design (the harness docs:
+    // "OpenClaw still owns ... OpenClaw dynamic tools (bridged)"). The bundled
+    // Copilot CLI ships built-in tools whose names (edit, read, write, bash,
+    // ...) collide with OpenClaw's coding-tool set. Mark every bridged tool as
+    // an explicit override so the SDK accepts the registration rather than
+    // throwing "External tool 'edit' conflicts with a built-in tool of the
+    // same name." OpenClaw's tool layer is the source of truth for these
+    // names within a copilot-sdk attempt.
+    overridesBuiltInTool: true,
     parameters: sourceTool.parameters as Record<string, unknown> | undefined,
   };
 }
