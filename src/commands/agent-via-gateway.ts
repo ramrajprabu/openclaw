@@ -46,7 +46,6 @@ type AgentCliOpts = {
   message: string;
   agent?: string;
   model?: string;
-  harness?: string;
   to?: string;
   sessionId?: string;
   thinking?: string;

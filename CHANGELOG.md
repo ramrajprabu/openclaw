@@ -6,7 +6,7 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
-- Agent harnesses: add the bundled `copilot-sdk` extension as a peer agent harness backed by `@github/copilot-sdk` and the GitHub Copilot CLI, selectable per-model or per-provider via `agentRuntime.id: "copilot-sdk"` or `openclaw agent --local --harness copilot-sdk`; subscription Copilot providers (`github`, `openclaw`, `copilot`) are claimed by the harness's doctor contract; PI remains the default and `auto` never selects copilot-sdk.
+- Agent harnesses: add the bundled `copilot-sdk` extension as a peer agent harness backed by `@github/copilot-sdk` and the GitHub Copilot CLI, selectable per-model or per-provider via `agentRuntime.id: "copilot-sdk"`; subscription Copilot providers (`github`, `openclaw`, `copilot`) are claimed by the harness's doctor contract; PI remains the default and `auto` never selects copilot-sdk.
 - Dependencies: route root ambient Node proxy agents through `@openclaw/proxyline` and drop root `proxy-agent`, `https-proxy-agent`, and `minimatch` dependencies.
 - Control UI/i18n: add a `pnpm ui:i18n:report` baseline report for hardcoded-copy focus areas and locale fallback metadata. (#81320) Thanks @samzong.
 - Maintainer tooling: add a repo-local `codex-review` skill for Codex closeout reviews, including local dirty-work and PR-branch review helpers that rerun until no accepted/actionable findings remain and avoid unsupported inline prompts with `--base`.

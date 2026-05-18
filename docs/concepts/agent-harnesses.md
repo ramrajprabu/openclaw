@@ -26,7 +26,7 @@ are peer options that handle specific provider / model families.
 | -------------- | ------------- | ------------------------------------------------------------ | -------------------- | -------------------------------------------------------------------------------------- |
 | PI (built-in)  | `pi`          | All providers                                                | OpenClaw             | Default. No action required.                                                           |
 | Codex          | `codex`       | `openai/*` (default for that prefix in `auto` mode)          | Codex app-server     | Enable the bundled `codex` plugin. `openai/*` then resolves to it.                     |
-| GitHub Copilot | `copilot-sdk` | `github/*`, `openclaw/*`, `copilot/*` (subscription Copilot) | Copilot CLI (SDK)    | Per-agent / per-provider `agentRuntime.id: "copilot-sdk"`, or `--harness copilot-sdk`. |
+| GitHub Copilot | `copilot-sdk` | `github/*`, `openclaw/*`, `copilot/*` (subscription Copilot) | Copilot CLI (SDK)    | Per-agent / per-provider `agentRuntime.id: "copilot-sdk"`. |
 
 `auto` still falls back to PI for anything that is not explicitly claimed.
 Selecting `copilot-sdk` is always opt-in; nothing routes there automatically.
@@ -64,7 +64,7 @@ documented in [Codex harness](/plugins/codex-harness).
 
 ## Opting in to the Copilot SDK harness
 
-There are three ways to select `copilot-sdk` for an embedded agent turn. They
+There are two ways to select `copilot-sdk` for an embedded agent turn. They
 follow the same precedence as any other harness selection: model-scoped policy
 beats provider-scoped policy beats `auto`.
 
@@ -110,25 +110,10 @@ runtime once at the provider level:
 This is convenient when an agent uses several Copilot subscription models and
 you do not want to repeat the runtime block per model.
 
-### 3. One-off CLI selection
-
-For ad-hoc embedded / local runs, pass `--harness copilot-sdk` to
-`openclaw agent`:
-
-```bash
-openclaw agent --local --harness copilot-sdk --message "Test"
-```
-
-The flag forces a specific harness id for the duration of the run and is
-independent of any persisted runtime policy. `openclaw agent --help` lists the
-known harness ids (including `copilot-sdk`); plugin-supplied ids are accepted
-as well.
-
-There is no whole-agent or whole-session env knob for harness selection.
-`OPENCLAW_AGENT_RUNTIME` and other session-wide harness pins are ignored.
-Use per-provider or per-model `agentRuntime.id`, or the `--harness` flag,
-instead. Run `openclaw doctor --fix` to remove legacy whole-agent runtime
-config.
+There is no whole-agent or whole-session env knob for harness selection, and
+no CLI flag either. `OPENCLAW_AGENT_RUNTIME` and other session-wide harness
+pins are ignored. Use per-provider or per-model `agentRuntime.id`. Run
+`openclaw doctor --fix` to remove legacy whole-agent runtime config.
 
 ## What each harness owns
 

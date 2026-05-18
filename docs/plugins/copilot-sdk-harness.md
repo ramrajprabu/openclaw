@@ -58,12 +58,6 @@ Pin one model (or one provider) to the harness:
 }
 ```
 
-Or, for an ad-hoc local run:
-
-```bash
-openclaw agent --local --harness copilot-sdk --message "Test"
-```
-
 Both routes are documented in detail in
 [Agent harnesses → Opting in](/concepts/agent-harnesses#opting-in-to-the-copilot-sdk-harness).
 

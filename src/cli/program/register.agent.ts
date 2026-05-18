@@ -1,5 +1,4 @@
 import type { Command } from "commander";
-import { KNOWN_AGENT_HARNESS_RUNTIME_IDS } from "../../agents/harness/policy.js";
 import { agentCliCommand } from "../../commands/agent-via-gateway.js";
 import {
   agentsAddCommand,
@@ -30,10 +29,6 @@ export function registerAgentCommands(program: Command, args: { agentChannelOpti
     .option("--session-id <id>", "Use an explicit session id")
     .option("--agent <id>", "Agent id (overrides routing bindings)")
     .option("--model <id>", "Model override for this run (provider/model or model id)")
-    .option(
-      "--harness <id>",
-      `Force an agent harness id for embedded/local runs (${KNOWN_AGENT_HARNESS_RUNTIME_IDS.join(" | ")}; custom plugin ids allowed; use --local for deterministic CLI-side selection)`,
-    )
     .option(
       "--thinking <level>",
       "Thinking level: off | minimal | low | medium | high | xhigh | adaptive | max where supported",
@@ -77,10 +72,6 @@ ${formatHelpExamples([
   [
     'openclaw agent --agent ops --message "Generate report" --deliver --reply-channel slack --reply-to "#reports"',
     "Send reply to a different channel/target.",
-  ],
-  [
-    'openclaw agent --local --harness copilot-sdk --message "Test"',
-    "Run via the copilot-sdk harness locally.",
   ],
 ])}
 

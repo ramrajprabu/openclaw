@@ -75,7 +75,7 @@ A single track:
 2. Build `src/agents/copilot-sdk-runtime/` (small, self-contained module) that mirrors the few PI-runner concepts the harness contract needs.
 3. Ship `src/agents/harness/builtin-copilot-sdk.ts` registering an `id: "copilot-sdk"` `AgentHarness` via the documented plugin path.
 4. Extend the runtime policy enum to accept `"copilot-sdk"`.
-5. Make selection opt-in: a user has to set `agentHarnessId: "copilot-sdk"` (per-agent config) or pass `--harness copilot-sdk` (CLI) or set `OPENCLAW_AGENT_HARNESS=copilot-sdk` (env). `auto` keeps falling back to PI.
+5. Make selection opt-in: a user has to set `agentHarnessId: "copilot-sdk"` (per-agent config). `auto` keeps falling back to PI. (Implementation note: the originally proposed `--harness <id>` CLI flag and `OPENCLAW_AGENT_HARNESS` env var were dropped during implementation in favour of config-only opt-in via `agentRuntime.id`.)
 6. Test it (focused unit tests with injected SDK fakes; one live smoke gated on `OPENCLAW_LIVE_TEST=1`).
 7. Document it.
 
@@ -125,8 +125,8 @@ src/agents/harness/
   policy.ts               # runtime enum widened with "copilot-sdk" (the ONLY core touch)
 
 src/cli/
-  <existing command-catalog plumbing>  # --harness copilot-sdk via the existing
-                                       # agentHarnessId -> selectAgentHarness() path
+  <existing command-catalog plumbing>  # config-only opt-in via agentRuntime.id
+                                       # (no dedicated CLI flag in the shipped MVP)
 ```
 
 The harness type, registration, and helpers are all imported from
@@ -167,9 +167,9 @@ detectable in code review.
 
 - `agents/harness/policy.ts` runtime enum gains `"copilot-sdk"` alongside `"auto"` and `"pi"`. `auto` behavior unchanged.
 - New optional file `~/.openclaw/agents/<agentId>/agent/copilot.json`: `{ copilotHome?, model?, reasoningEffort?, infiniteSessions?, provider? }`. Absent means "use sensible defaults derived from the agent's existing config".
-- New env knobs: `OPENCLAW_AGENT_HARNESS=copilot-sdk`, `OPENCLAW_COPILOT_CLI_PATH`, `OPENCLAW_COPILOT_HOME_BASE` (defaults to `~/.openclaw/agents/<id>/copilot`).
-- New CLI flag: `openclaw agent --harness copilot-sdk` (already plumbed via `agentHarnessId` in `selectAgentHarness`).
-- New `openclaw doctor` probe that verifies `copilot --version`, auth, and `copilotHome` writability — only runs when at least one agent has `agentHarnessId: "copilot-sdk"`.
+- New env knobs: `OPENCLAW_COPILOT_CLI_PATH`, `OPENCLAW_COPILOT_HOME_BASE` (defaults to `~/.openclaw/agents/<id>/copilot`). (Implementation note: the originally proposed `OPENCLAW_AGENT_HARNESS` env knob was dropped in favour of config-only opt-in via `agentRuntime.id`.)
+- No new CLI flag. Selection is config-only via `agentRuntime.id: "copilot-sdk"` (per-model or per-provider). (Implementation note: an earlier draft proposed `openclaw agent --harness copilot-sdk`; the flag was implemented and then removed before merge — see CHANGELOG.)
+- New `openclaw doctor` probe that verifies `copilot --version`, auth, and `copilotHome` writability — only runs when at least one agent has `agentRuntime.id: "copilot-sdk"`.
 
 ### 3.6 Auth model
 
@@ -214,7 +214,7 @@ Exit: capability doc + working spike.
 - Ship `src/agents/harness/builtin-copilot-sdk.ts`.
 - Register via `src/plugins/builtin/copilot-sdk-harness.ts` (documented plugin path; no changes to `src/agents/harness/selection.ts` other than the policy enum widening).
 - Extend `policy.ts` runtime enum; document.
-- CLI flag `--harness copilot-sdk`.
+- CLI flag `--harness copilot-sdk` (later removed before merge in favour of config-only opt-in).
 - Focused per-bridge unit tests with injected fakes.
 - One live smoke (`OPENCLAW_LIVE_TEST=1`) on `gpt-4.1` with one custom tool.
 
@@ -261,7 +261,7 @@ Each item is sized for one PR. IDs match the SQL todo table.
 9. `harness-shim` — `extensions/copilot-sdk/harness.ts` exporting `createCopilotSdkAgentHarness(): AgentHarness` (mirrors `extensions/codex/harness.ts`).
 10. `plugin-register` — `extensions/copilot-sdk/index.ts` `init(api)` calling `api.registerAgentHarness(createCopilotSdkAgentHarness(...))`; manifest at `extensions/copilot-sdk/openclaw.plugin.json` with `onAgentHarnesses: ["copilot-sdk"]`.
 11. `policy-runtime-enum` — extend `src/agents/harness/policy.ts` runtime enum and config schema. **Only core file touched.**
-12. `cli-flag` — `openclaw agent --harness copilot-sdk` plumbing.
+12. `cli-flag` — `openclaw agent --harness copilot-sdk` plumbing. *(Removed before merge; selection is config-only via `agentRuntime.id`.)*
 13. `unit-tests-mvp` — focused tests per bridge with injected SDK fakes.
 14. `live-smoke` — `attempt.live.e2e.test.ts` under `OPENCLAW_LIVE_TEST=1`.
 15. `compaction-impl` — `harness.compact` via `infiniteSessions`; OpenClaw marker in `workspacePath/files/`.
