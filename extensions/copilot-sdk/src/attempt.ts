@@ -8,6 +8,7 @@ import type {
   AgentHarnessAttemptResult,
   AgentMessage,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { resolveCopilotAuth } from "./auth-bridge.js";
 import {
   attachEventBridge,
   type AssistantMessage,
@@ -19,8 +20,6 @@ import type { ClientCreateOptions, CopilotClientPool, PoolKey, PooledClient } fr
 import { createCopilotSdkToolBridge } from "./tool-bridge.js";
 
 const SUPPORTED_PROVIDERS = new Set(["github", "openclaw", "copilot"]);
-const TOKEN_PROFILE_ERROR =
-  "[copilot-sdk-attempt] gitHubToken auth requires profileId+profileVersion (pool keying safety; per Q5/Q1 decisions)";
 
 type AttemptResultWithSdkSessionId = AgentHarnessAttemptResult & { sdkSessionId?: string };
 type PromptErrorWithCode = Error & { code?: string; cause?: unknown };
@@ -411,44 +410,33 @@ function resolvePoolAcquire(params: AttemptParamsLike): {
   key: PoolKey;
   options: ClientCreateOptions;
 } {
-  const auth = params.auth;
-  const gitHubToken = readString(auth?.gitHubToken);
-  const authProfileId = readString(auth?.profileId) ?? readString(params.authProfileId);
-  const authProfileVersion = readString(auth?.profileVersion) ?? readString(params.profileVersion);
-
-  let authMode: PoolKey["authMode"] = "useLoggedInUser";
-  if (auth?.useLoggedInUser === true) {
-    authMode = "useLoggedInUser";
-  } else if (gitHubToken) {
-    if (!authProfileId || !authProfileVersion) {
-      throw new Error(TOKEN_PROFILE_ERROR);
-    }
-    authMode = "gitHubToken";
-  }
-
-  const copilotHome =
-    readString(params.copilotHome) ??
-    readString(params.agentDir) ??
-    readString(params.workspaceDir) ??
-    process.cwd();
+  const resolved = resolveCopilotAuth({
+    agentId: readString(params.agentId),
+    agentDir: readString(params.agentDir),
+    workspaceDir: readString(params.workspaceDir),
+    copilotHome: readString(params.copilotHome),
+    auth: params.auth,
+    authProfileId: readString(params.authProfileId),
+    profileVersion: readString(params.profileVersion),
+  });
 
   return {
     key: {
-      agentId: readString(params.agentId) ?? "copilot-sdk",
-      authMode,
-      ...(authMode === "gitHubToken"
+      agentId: resolved.agentId,
+      authMode: resolved.authMode,
+      ...(resolved.authMode === "gitHubToken"
         ? {
-            authProfileId,
-            authProfileVersion,
+            authProfileId: resolved.authProfileId,
+            authProfileVersion: resolved.authProfileVersion,
           }
         : {}),
-      copilotHome,
+      copilotHome: resolved.copilotHome,
     },
     options: {
-      copilotHome,
+      copilotHome: resolved.copilotHome,
       cwd: readString(params.cwd) ?? readString(params.workspaceDir),
-      gitHubToken: authMode === "gitHubToken" ? gitHubToken : undefined,
-      useLoggedInUser: authMode === "useLoggedInUser",
+      gitHubToken: resolved.authMode === "gitHubToken" ? resolved.gitHubToken : undefined,
+      useLoggedInUser: resolved.authMode === "useLoggedInUser",
     },
   };
 }
