@@ -150,6 +150,33 @@ describe("probeCopilotCliVersion", () => {
     }
     expect(fakeChild.kill).toHaveBeenCalled();
   });
+
+  it("returns just the first non-empty line as version when stdout has a banner / update hint", async () => {
+    const result = await probeCopilotCliVersion({
+      spawnFn: () =>
+        makeFakeChild({
+          stdout: "GitHub Copilot CLI 1.0.48.\nRun 'copilot update' to check for updates.\n",
+        }) as never,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.version).toBe("GitHub Copilot CLI 1.0.48.");
+      expect(result.rawStdout).toBe(
+        "GitHub Copilot CLI 1.0.48.\nRun 'copilot update' to check for updates.",
+      );
+    }
+  });
+
+  it("does not surface rawStdout when stdout is already single-line", async () => {
+    const result = await probeCopilotCliVersion({
+      spawnFn: () => makeFakeChild({ stdout: "1.2.3\n" }) as never,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.version).toBe("1.2.3");
+      expect(result.rawStdout).toBeUndefined();
+    }
+  });
 });
 
 describe("probeCopilotHomeWritable", () => {

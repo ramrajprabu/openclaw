@@ -50,92 +50,119 @@ const DEFAULT_PROBE_FILENAME = ".copilot-sdk-doctor-probe";
  */
 export async function probeCopilotCliVersion(
   options: ProbeCopilotCliVersionOptions = {},
-): Promise<ProbeResult<{ version: string; command: string }>> {
+): Promise<ProbeResult<{ version: string; command: string; rawStdout?: string }>> {
   const command = options.command ?? "copilot";
   const args = options.args ?? ["--version"];
   const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   const spawnImpl = options.spawnFn ?? spawn;
 
-  return new Promise<ProbeResult<{ version: string; command: string }>>((resolve) => {
-    let child: ReturnType<typeof spawn> | undefined;
-    let settled = false;
-    const settle = (result: ProbeResult<{ version: string; command: string }>): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
+  return new Promise<ProbeResult<{ version: string; command: string; rawStdout?: string }>>(
+    (resolve) => {
+      let child: ReturnType<typeof spawn> | undefined;
+      let settled = false;
+      const settle = (
+        result: ProbeResult<{ version: string; command: string; rawStdout?: string }>,
+      ): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timer) {
+          clearTimeout(timer);
+        }
+        try {
+          child?.kill();
+        } catch {
+          // ignore double-kill / already-dead errors
+        }
+        resolve(result);
+      };
+
+      const timer = setTimeout(() => {
+        settle({
+          ok: false,
+          reason: "probe-timeout",
+          details: { command, args: [...args], timeoutMs },
+        });
+      }, timeoutMs);
+
       try {
-        child?.kill();
-      } catch {
-        // ignore double-kill / already-dead errors
+        child = spawnImpl(command, [...args], { stdio: ["ignore", "pipe", "pipe"] });
+      } catch (error) {
+        settle({
+          ok: false,
+          reason: "spawn-failed",
+          details: { command, args: [...args], rawError: formatProbeError(error) },
+        });
+        return;
       }
-      resolve(result);
-    };
 
-    const timer = setTimeout(() => {
-      settle({
-        ok: false,
-        reason: "probe-timeout",
-        details: { command, args: [...args], timeoutMs },
+      let stdout = "";
+      let stderr = "";
+      child.stdout?.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
       });
-    }, timeoutMs);
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+      });
+      child.on("error", (error: Error) => {
+        settle({
+          ok: false,
+          reason: "spawn-error",
+          details: { command, args: [...args], rawError: error.message },
+        });
+      });
+      child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+        if (code !== 0) {
+          settle({
+            ok: false,
+            reason: "non-zero-exit",
+            details: {
+              command,
+              args: [...args],
+              exitCode: code,
+              signal,
+              stderr: stderr.trim() || undefined,
+            },
+          });
+          return;
+        }
+        const rawStdout = stdout.trim();
+        if (!rawStdout) {
+          settle({
+            ok: false,
+            reason: "empty-version",
+            details: { command, args: [...args] },
+          });
+          return;
+        }
+        // Many version commands (notably the bundled `copilot --version`)
+        // print a banner plus an "update available" hint on subsequent
+        // lines. Surface only the first non-empty line as `version` so the
+        // doctor UI gets a clean string; keep the full stdout in
+        // `rawStdout` for debugging.
+        const version = firstNonEmptyLine(rawStdout) ?? rawStdout;
+        const payload: { version: string; command: string; rawStdout?: string } = {
+          version,
+          command,
+        };
+        if (rawStdout !== version) {
+          payload.rawStdout = rawStdout;
+        }
+        settle({ ok: true, ...payload });
+      });
+    },
+  );
+}
 
-    try {
-      child = spawnImpl(command, [...args], { stdio: ["ignore", "pipe", "pipe"] });
-    } catch (error) {
-      settle({
-        ok: false,
-        reason: "spawn-failed",
-        details: { command, args: [...args], rawError: formatProbeError(error) },
-      });
-      return;
+function firstNonEmptyLine(value: string): string | undefined {
+  for (const line of value.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.length > 0) {
+      return trimmed;
     }
-
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", (error: Error) => {
-      settle({
-        ok: false,
-        reason: "spawn-error",
-        details: { command, args: [...args], rawError: error.message },
-      });
-    });
-    child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
-      if (code !== 0) {
-        settle({
-          ok: false,
-          reason: "non-zero-exit",
-          details: {
-            command,
-            args: [...args],
-            exitCode: code,
-            signal,
-            stderr: stderr.trim() || undefined,
-          },
-        });
-        return;
-      }
-      const version = stdout.trim();
-      if (!version) {
-        settle({
-          ok: false,
-          reason: "empty-version",
-          details: { command, args: [...args] },
-        });
-        return;
-      }
-      settle({ ok: true, version, command });
-    });
-  });
+  }
+  return undefined;
 }
 
 /**
