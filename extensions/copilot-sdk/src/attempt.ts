@@ -19,6 +19,11 @@ import {
 } from "./permission-bridge.js";
 import type { ClientCreateOptions, CopilotClientPool, PoolKey, PooledClient } from "./runtime.js";
 import { createCopilotSdkToolBridge } from "./tool-bridge.js";
+import {
+  createUserInputBridge,
+  denyAllUserInputPolicy,
+  type CopilotSdkUserInputPolicy,
+} from "./user-input-bridge.js";
 
 const SUPPORTED_PROVIDERS = new Set(["github", "openclaw", "copilot"]);
 
@@ -45,13 +50,9 @@ type AttemptParamsLike = AgentHarnessAttemptParams & {
   permissionPolicy?: CopilotSdkPermissionPolicy;
   profileVersion?: string;
   reasoningEffort?: "low" | "medium" | "high" | "xhigh";
+  userInputPolicy?: CopilotSdkUserInputPolicy;
 };
 type ModelRef = { api?: string; id: string; provider: string };
-type SdkUserInputRequest = {
-  allowFreeform?: boolean;
-  choices?: string[];
-  question: string;
-};
 
 export interface CopilotSdkAttemptDeps {
   pool: CopilotClientPool;
@@ -339,6 +340,7 @@ function createSessionConfig(
   | "workingDirectory"
 > {
   const permissionPolicy = params.permissionPolicy ?? rejectAllPolicy;
+  const userInputPolicy = params.userInputPolicy ?? denyAllUserInputPolicy;
   return {
     model: sdkModelId,
     // Permission decisions flow through permission-bridge. The default
@@ -347,14 +349,12 @@ function createSessionConfig(
     // the host's PI-style tool-policy decisions. See permission-bridge.ts
     // for the back-pointer to src/agents/pi-tools.before-tool-call.ts.
     onPermissionRequest: createPermissionBridge(permissionPolicy),
-    // SAFETY: user-input-bridge has not yet been implemented. The placeholder
-    // rejects every user-input request. user-input-bridge replaces this with
-    // the channel/TUI prompt flow via commitments/.
-    onUserInputRequest: (async (_request: SdkUserInputRequest) => {
-      throw new Error(
-        "[copilot-sdk-attempt] onUserInputRequest not implemented at MVP; awaiting user-input-bridge todo",
-      );
-    }) as NonNullable<SessionConfig["onUserInputRequest"]>,
+    // User-input requests flow through user-input-bridge. The default
+    // (denyAllUserInputPolicy) returns a synthetic answer so the model
+    // sees a real string rather than a generic RPC failure; the core
+    // wiring layer can inject `delegatingUserInputPolicy({ onRequest })`
+    // that calls into the host's channel/TUI prompt path (commitments/).
+    onUserInputRequest: createUserInputBridge(userInputPolicy),
     reasoningEffort: params.reasoningEffort,
     tools: sdkTools,
     workingDirectory: readString(params.workspaceDir) ?? readString(params.cwd),

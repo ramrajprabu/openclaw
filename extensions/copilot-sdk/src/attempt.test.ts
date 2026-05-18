@@ -475,7 +475,7 @@ describe("runCopilotSdkAttempt", () => {
     expect(result.feedback).toContain("no permission policy installed");
   });
 
-  it("placeholder user-input handler throws", async () => {
+  it("default user-input policy returns synthetic deny-all answer", async () => {
     const sdk = makeFakeSdk();
     const pool = makeFakePool(sdk);
 
@@ -483,10 +483,15 @@ describe("runCopilotSdkAttempt", () => {
 
     const handler = (
       sdk.createSession.mock.calls[0]?.[0] as {
-        onUserInputRequest: (request: { question: string }) => Promise<unknown>;
+        onUserInputRequest: (
+          request: { question: string },
+          invocation: { sessionId: string },
+        ) => Promise<{ answer: string; wasFreeform: boolean }>;
       }
     ).onUserInputRequest;
-    await expect(handler({ question: "name?" })).rejects.toThrow("user-input-bridge");
+    const response = await handler({ question: "name?" }, { sessionId: "sess-1" });
+    expect(response.wasFreeform).toBe(true);
+    expect(response.answer).toContain("no user-input policy installed");
   });
 
   it("timeout", async () => {
