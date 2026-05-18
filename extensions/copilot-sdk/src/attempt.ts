@@ -58,6 +58,15 @@ export interface CopilotSdkAttemptDeps {
   pool: CopilotClientPool;
   now?: () => number;
   createToolBridge?: typeof createCopilotSdkToolBridge;
+  /**
+   * Called once with the SDK session id and pooled client immediately
+   * after the SDK session is created (or resumed) successfully. The
+   * harness uses this to track the openclawSessionId -> sdkSessionId
+   * mapping needed for `reset(params)` (see harness.ts). Exceptions
+   * thrown from this callback are swallowed so they cannot break the
+   * attempt.
+   */
+  onSessionEstablished?: (info: { sdkSessionId: string; pooledClient: PooledClient }) => void;
 }
 
 export async function runCopilotSdkAttempt(
@@ -169,6 +178,13 @@ export async function runCopilotSdkAttempt(
 
     sdkSessionId = readSessionId(session) ?? resumeSessionId;
     sessionIdUsed = sdkSessionId ?? input.sessionId;
+    if (sdkSessionId && deps.onSessionEstablished) {
+      try {
+        deps.onSessionEstablished({ sdkSessionId, pooledClient: handle });
+      } catch {
+        // never let session-tracking callbacks break attempts
+      }
+    }
     bridge = attachEventBridge(session, {
       onAssistantDelta: input.onAssistantDelta,
       getSdkSessionId: () => sdkSessionId,

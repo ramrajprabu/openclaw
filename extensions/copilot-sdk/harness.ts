@@ -1,5 +1,11 @@
-import type { AgentHarness } from "openclaw/plugin-sdk/agent-harness-runtime";
-import type { CopilotClientPool, CopilotClientPoolOptions } from "./src/runtime.js";
+import type { CopilotClient } from "@github/copilot-sdk";
+import type {
+  AgentHarness,
+  AgentHarnessAttemptParams,
+  AgentHarnessAttemptResult,
+  AgentHarnessResetParams,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
+import type { CopilotClientPool, CopilotClientPoolOptions, PooledClient } from "./src/runtime.js";
 
 export type { CopilotClientPool, CopilotClientPoolOptions };
 
@@ -12,6 +18,11 @@ export interface CreateCopilotSdkAgentHarnessOptions {
   pluginConfig?: unknown;
   pool?: CopilotClientPool;
   poolOptions?: CopilotClientPoolOptions;
+}
+
+interface TrackedSession {
+  sdkSessionId: string;
+  client: CopilotClient;
 }
 
 export function createCopilotSdkAgentHarness(
@@ -28,6 +39,11 @@ export function createCopilotSdkAgentHarness(
   let disposed = false;
   let disposePromise: Promise<void> | undefined;
   const inFlight = new Set<Promise<unknown>>();
+  // Maps OpenClaw session id (from AgentHarnessAttemptParams.sessionId) to
+  // the SDK session id + client that owns it. Populated by
+  // runCopilotSdkAttempt via the onSessionEstablished callback so that
+  // reset(params) can call client.deleteSession on the right client.
+  const trackedSessions = new Map<string, TrackedSession>();
 
   async function getPool(): Promise<CopilotClientPool> {
     if (options?.pool) return options.pool;
@@ -62,18 +78,56 @@ export function createCopilotSdkAgentHarness(
       return { supported: true, priority: 100 };
     },
 
-    async runAttempt(params) {
+    async runAttempt(params: AgentHarnessAttemptParams): Promise<AgentHarnessAttemptResult> {
       if (disposed) {
         throw new Error("[copilot-sdk] harness has been disposed; cannot start new attempts");
       }
       const { runCopilotSdkAttempt } = await import("./src/attempt.js");
       const pool = await getPool();
-      const attemptPromise = runCopilotSdkAttempt(params, { pool });
+      const openclawSessionId = typeof params.sessionId === "string" ? params.sessionId : undefined;
+      const attemptPromise = runCopilotSdkAttempt(params, {
+        pool,
+        onSessionEstablished: openclawSessionId
+          ? ({
+              sdkSessionId,
+              pooledClient,
+            }: {
+              sdkSessionId: string;
+              pooledClient: PooledClient;
+            }) => {
+              trackedSessions.set(openclawSessionId, {
+                sdkSessionId,
+                client: pooledClient.client,
+              });
+            }
+          : undefined,
+      });
       inFlight.add(attemptPromise);
       try {
         return await attemptPromise;
       } finally {
         inFlight.delete(attemptPromise);
+      }
+    },
+
+    async reset(params: AgentHarnessResetParams): Promise<void> {
+      const openclawSessionId = typeof params.sessionId === "string" ? params.sessionId : undefined;
+      if (!openclawSessionId) {
+        return;
+      }
+      const tracked = trackedSessions.get(openclawSessionId);
+      if (!tracked) {
+        // Session was created by a different harness, or already reset.
+        return;
+      }
+      trackedSessions.delete(openclawSessionId);
+      try {
+        await tracked.client.deleteSession(tracked.sdkSessionId);
+      } catch {
+        // Best-effort: client may be stopped, session may not exist
+        // server-side, or the SDK may report a transient error. The
+        // registry already logs broadcast reset failures; swallow here
+        // so one harness cannot block the reset broadcast.
       }
     },
 
@@ -84,6 +138,7 @@ export function createCopilotSdkAgentHarness(
         if (inFlight.size > 0) {
           await Promise.allSettled([...inFlight]);
         }
+        trackedSessions.clear();
         if (createdPool) {
           const errors = await createdPool.dispose();
           if (errors.length > 0) {

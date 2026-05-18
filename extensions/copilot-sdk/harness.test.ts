@@ -205,8 +205,16 @@ describe("createCopilotSdkAgentHarness", () => {
     await expect(harness.runAttempt(ATTEMPT_PARAMS)).resolves.toBe(secondResult);
 
     expect(mocks.createCopilotClientPool).toHaveBeenCalledTimes(1);
-    expect(mocks.runCopilotSdkAttempt).toHaveBeenNthCalledWith(1, ATTEMPT_PARAMS, { pool });
-    expect(mocks.runCopilotSdkAttempt).toHaveBeenNthCalledWith(2, ATTEMPT_PARAMS, { pool });
+    expect(mocks.runCopilotSdkAttempt).toHaveBeenNthCalledWith(
+      1,
+      ATTEMPT_PARAMS,
+      expect.objectContaining({ pool }),
+    );
+    expect(mocks.runCopilotSdkAttempt).toHaveBeenNthCalledWith(
+      2,
+      ATTEMPT_PARAMS,
+      expect.objectContaining({ pool }),
+    );
   });
 
   it("multiple harness instances create independent pools", async () => {
@@ -220,12 +228,16 @@ describe("createCopilotSdkAgentHarness", () => {
     await expect(secondHarness.runAttempt(ATTEMPT_PARAMS)).resolves.toBe(ATTEMPT_RESULT);
 
     expect(mocks.createCopilotClientPool).toHaveBeenCalledTimes(2);
-    expect(mocks.runCopilotSdkAttempt).toHaveBeenNthCalledWith(1, ATTEMPT_PARAMS, {
-      pool: poolOne,
-    });
-    expect(mocks.runCopilotSdkAttempt).toHaveBeenNthCalledWith(2, ATTEMPT_PARAMS, {
-      pool: poolTwo,
-    });
+    expect(mocks.runCopilotSdkAttempt).toHaveBeenNthCalledWith(
+      1,
+      ATTEMPT_PARAMS,
+      expect.objectContaining({ pool: poolOne }),
+    );
+    expect(mocks.runCopilotSdkAttempt).toHaveBeenNthCalledWith(
+      2,
+      ATTEMPT_PARAMS,
+      expect.objectContaining({ pool: poolTwo }),
+    );
   });
 
   it("runAttempt does not serialize concurrent attempts", async () => {
@@ -343,6 +355,135 @@ describe("createCopilotSdkAgentHarness", () => {
     await expect(harness.runAttempt(ATTEMPT_PARAMS)).resolves.toBe(ATTEMPT_RESULT);
 
     expect(mocks.createCopilotClientPool).not.toHaveBeenCalled();
-    expect(mocks.runCopilotSdkAttempt).toHaveBeenCalledWith(ATTEMPT_PARAMS, { pool });
+    expect(mocks.runCopilotSdkAttempt).toHaveBeenCalledWith(
+      ATTEMPT_PARAMS,
+      expect.objectContaining({ pool }),
+    );
+  });
+
+  describe("reset", () => {
+    it("is a no-op when params.sessionId is missing", async () => {
+      const pool = makePoolMock();
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await expect(harness.reset?.({})).resolves.toBeUndefined();
+    });
+
+    it("is a no-op when the session was never tracked", async () => {
+      const pool = makePoolMock();
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await expect(harness.reset?.({ sessionId: "unknown" })).resolves.toBeUndefined();
+    });
+
+    it("calls deleteSession on the client that created the session", async () => {
+      const pool = makePoolMock();
+      const deleteSession = vi.fn().mockResolvedValue(undefined);
+      const client = { deleteSession } as any;
+      mocks.runCopilotSdkAttempt.mockImplementation(async (params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: "sdk-sess-123",
+          pooledClient: { key: {} as any, client },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt({ ...ATTEMPT_PARAMS, sessionId: "oc-sess-1" } as any);
+      await harness.reset?.({ sessionId: "oc-sess-1" });
+
+      expect(deleteSession).toHaveBeenCalledTimes(1);
+      expect(deleteSession).toHaveBeenCalledWith("sdk-sess-123");
+    });
+
+    it("does not call deleteSession when no sdkSessionId was reported", async () => {
+      const pool = makePoolMock();
+      const deleteSession = vi.fn().mockResolvedValue(undefined);
+      mocks.runCopilotSdkAttempt.mockImplementation(async (_params, _deps) => ATTEMPT_RESULT);
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt({ ...ATTEMPT_PARAMS, sessionId: "oc-sess-2" } as any);
+      await harness.reset?.({ sessionId: "oc-sess-2" });
+
+      expect(deleteSession).not.toHaveBeenCalled();
+    });
+
+    it("swallows errors thrown by client.deleteSession", async () => {
+      const pool = makePoolMock();
+      const deleteSession = vi.fn().mockRejectedValue(new Error("session not found"));
+      const client = { deleteSession } as any;
+      mocks.runCopilotSdkAttempt.mockImplementation(async (params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: "sdk-sess-err",
+          pooledClient: { key: {} as any, client },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt({ ...ATTEMPT_PARAMS, sessionId: "oc-sess-3" } as any);
+
+      await expect(harness.reset?.({ sessionId: "oc-sess-3" })).resolves.toBeUndefined();
+      expect(deleteSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("forgets the session after reset; a second reset is a no-op", async () => {
+      const pool = makePoolMock();
+      const deleteSession = vi.fn().mockResolvedValue(undefined);
+      const client = { deleteSession } as any;
+      mocks.runCopilotSdkAttempt.mockImplementation(async (params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: "sdk-sess-x",
+          pooledClient: { key: {} as any, client },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt({ ...ATTEMPT_PARAMS, sessionId: "oc-sess-4" } as any);
+      await harness.reset?.({ sessionId: "oc-sess-4" });
+      await harness.reset?.({ sessionId: "oc-sess-4" });
+
+      expect(deleteSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not invoke deleteSession for a session belonging to a different openclawSessionId", async () => {
+      const pool = makePoolMock();
+      const deleteSession = vi.fn().mockResolvedValue(undefined);
+      const client = { deleteSession } as any;
+      mocks.runCopilotSdkAttempt.mockImplementation(async (params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: "sdk-sess-y",
+          pooledClient: { key: {} as any, client },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt({ ...ATTEMPT_PARAMS, sessionId: "oc-A" } as any);
+      await harness.reset?.({ sessionId: "oc-B" });
+
+      expect(deleteSession).not.toHaveBeenCalled();
+    });
+  });
+
+  it("dispose clears tracked sessions so subsequent reset is a no-op", async () => {
+    const pool = makePoolMock();
+    const deleteSession = vi.fn().mockResolvedValue(undefined);
+    const client = { deleteSession } as any;
+    mocks.runCopilotSdkAttempt.mockImplementation(async (params, deps) => {
+      deps.onSessionEstablished?.({
+        sdkSessionId: "sdk-sess-d",
+        pooledClient: { key: {} as any, client },
+      });
+      return ATTEMPT_RESULT;
+    });
+    const harness = createCopilotSdkAgentHarness({ pool });
+
+    await harness.runAttempt({ ...ATTEMPT_PARAMS, sessionId: "oc-disp" } as any);
+    await harness.dispose?.();
+    await harness.reset?.({ sessionId: "oc-disp" });
+
+    expect(deleteSession).not.toHaveBeenCalled();
   });
 });
