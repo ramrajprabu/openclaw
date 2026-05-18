@@ -333,6 +333,116 @@ describe("runCopilotSdkAttempt", () => {
     expect(sdk.createSession).toHaveBeenCalledTimes(0);
   });
 
+  it("replay-shim: replayInvalid:true forces createSession even when sdkSessionId is present", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+
+    const result = await runCopilotSdkAttempt(
+      makeParams({
+        initialReplayState: {
+          sdkSessionId: "resume-stale",
+          replayInvalid: true,
+        } as never,
+      }),
+      { pool },
+    );
+
+    expect(sdk.resumeSession).toHaveBeenCalledTimes(0);
+    expect(sdk.createSession).toHaveBeenCalledTimes(1);
+    // Downgrade invalidates replay even when no side effects occurred.
+    expect(result.replayMetadata).toEqual({
+      hadPotentialSideEffects: false,
+      replaySafe: false,
+    });
+  });
+
+  it("replay-shim: recovers from missing-session resume failure by downgrading to createSession", async () => {
+    let resumeCalls = 0;
+    const sdk = makeFakeSdk({
+      onResumeSession: () => {
+        resumeCalls += 1;
+        throw Object.assign(new Error("session not found"), { status: 404 });
+      },
+      onCreateSession: (session) => {
+        session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("fresh"));
+      },
+    });
+    const pool = makeFakePool(sdk);
+
+    const result = await runCopilotSdkAttempt(
+      makeParams({ initialReplayState: { sdkSessionId: "resume-gone" } as never }),
+      { pool },
+    );
+
+    expect(resumeCalls).toBe(1);
+    expect(sdk.createSession).toHaveBeenCalledTimes(1);
+    expect(result.promptError).toBeUndefined();
+    // Recovery invalidates replay even though no side effects occurred.
+    expect(result.replayMetadata).toEqual({
+      hadPotentialSideEffects: false,
+      replaySafe: false,
+    });
+    // The freshly-created session id is reported, not the stale resume id.
+    expect(getSdkSessionId(result)).not.toBe("resume-gone");
+  });
+
+  it("replay-shim: unrecoverable resume failure surfaces as promptError (no downgrade)", async () => {
+    const sdk = makeFakeSdk({
+      onResumeSession: () => {
+        throw new Error("ECONNRESET network failure");
+      },
+    });
+    const pool = makeFakePool(sdk);
+
+    const result = await runCopilotSdkAttempt(
+      makeParams({ initialReplayState: { sdkSessionId: "resume-x" } as never }),
+      { pool },
+    );
+
+    expect(sdk.resumeSession).toHaveBeenCalledTimes(1);
+    expect(sdk.createSession).toHaveBeenCalledTimes(0);
+    expect(result.promptError?.message).toContain("ECONNRESET");
+  });
+
+  it("replay-shim: prior hadPotentialSideEffects propagates into result replayMetadata", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+
+    const result = await runCopilotSdkAttempt(
+      makeParams({
+        initialReplayState: { hadPotentialSideEffects: true } as never,
+      }),
+      { pool },
+    );
+
+    expect(result.replayMetadata).toEqual({
+      hadPotentialSideEffects: true,
+      replaySafe: false,
+    });
+  });
+
+  it("replay-shim: prior replayInvalid propagates even on an early-return failure", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+
+    const result = await runCopilotSdkAttempt(
+      makeParams({
+        model: { api: "openai-responses", id: "claude", provider: "anthropic" } as never,
+        initialReplayState: {
+          replayInvalid: true,
+          hadPotentialSideEffects: true,
+        } as never,
+      }),
+      { pool },
+    );
+
+    expect(getPromptErrorCode(result)).toBe("model_not_supported");
+    expect(result.replayMetadata).toEqual({
+      hadPotentialSideEffects: true,
+      replaySafe: false,
+    });
+  });
+
   it("abort path (mid-stream)", async () => {
     const controller = new AbortController();
     const sendDeferred = createDeferred<SessionEventShape | undefined>();

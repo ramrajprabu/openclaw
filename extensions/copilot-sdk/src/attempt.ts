@@ -18,6 +18,7 @@ import {
   rejectAllPolicy,
   type CopilotSdkPermissionPolicy,
 } from "./permission-bridge.js";
+import { classifyResumeFailure, computeReplayMetadata, decideReplayAction } from "./replay-shim.js";
 import type { ClientCreateOptions, CopilotClientPool, PoolKey, PooledClient } from "./runtime.js";
 import { createCopilotSdkToolBridge } from "./tool-bridge.js";
 import {
@@ -121,6 +122,8 @@ export async function runCopilotSdkAttempt(
   let session: SessionLike | undefined;
   let bridge: ReturnType<typeof attachEventBridge> | undefined;
   let releaseError: Error | undefined;
+  let downgradedFromResume = false;
+  let resumeFailureRecovered = false;
 
   const onAbort = () => {
     abortRequested = true;
@@ -167,19 +170,46 @@ export async function runCopilotSdkAttempt(
     handle = await deps.pool.acquire(poolAcquire.key, poolAcquire.options);
     const client = handle.client;
     const sessionConfig = createSessionConfig(input, modelRef.id, sdkTools);
-    const resumeSessionId = readString(input.initialReplayState?.sdkSessionId);
+    const replayDecision = decideReplayAction({
+      sdkSessionId: input.initialReplayState?.sdkSessionId,
+      replayInvalid: input.initialReplayState?.replayInvalid,
+    });
+    downgradedFromResume = replayDecision.downgradedFromResume;
+    const resumeSessionId =
+      replayDecision.action === "resume" ? replayDecision.sdkSessionId : undefined;
 
-    session = (resumeSessionId
-      ? await client.resumeSession(resumeSessionId, {
+    // SAFETY: replay-shim owns the create/resume decision and the
+    // recovery policy when resumeSession fails. See replay-shim.ts.
+    // continuePendingWork is always false here so suspended tool/
+    // permission work cannot be replayed implicitly — replay-shim's
+    // worst-case-wins replayMetadata is the only signal the
+    // orchestrator uses to decide whether the next attempt is safe.
+    if (resumeSessionId) {
+      try {
+        session = (await client.resumeSession(resumeSessionId, {
           ...sessionConfig,
-          // SAFETY: replay-shim owns pending-work replay. This bridge always resumes
-          // with continuePendingWork: false so suspended tool/permission work cannot
-          // be replayed implicitly before the dedicated replay bridge lands.
           continuePendingWork: false,
-        })
-      : await client.createSession(sessionConfig)) as unknown as SessionLike;
+        })) as unknown as SessionLike;
+      } catch (error: unknown) {
+        const classification = classifyResumeFailure(error);
+        if (!classification.recoverable) {
+          throw error;
+        }
+        // Downgrade silently: the prior SDK session is gone, so start a
+        // fresh one. replayMetadata will reflect replaySafe:false via
+        // resumeFailureRecovered so the orchestrator does not blindly
+        // retry the same prompt with stale assumptions.
+        resumeFailureRecovered = true;
+        session = (await client.createSession(sessionConfig)) as unknown as SessionLike;
+      }
+    } else {
+      session = (await client.createSession(sessionConfig)) as unknown as SessionLike;
+    }
 
-    sdkSessionId = readSessionId(session) ?? resumeSessionId;
+    // After a recovered resume, the prior sdkSessionId no longer exists
+    // server-side, so don't fall back to it: only the freshly-created
+    // session's id is valid.
+    sdkSessionId = readSessionId(session) ?? (resumeFailureRecovered ? undefined : resumeSessionId);
     sessionIdUsed = sdkSessionId ?? input.sessionId;
     if (sdkSessionId && deps.onSessionEstablished) {
       try {
@@ -262,6 +292,7 @@ export async function runCopilotSdkAttempt(
     aborted,
     assistantTexts,
     currentAttemptAssistant: lastAssistant,
+    downgradedFromResume,
     externalAbort,
     itemLifecycle: {
       activeCount: Math.max((snap?.startedCount ?? 0) - (snap?.completedCount ?? 0), 0),
@@ -272,6 +303,7 @@ export async function runCopilotSdkAttempt(
     messagesSnapshot,
     now,
     promptError,
+    resumeFailureRecovered,
     sdkSessionId,
     sessionIdUsed,
     timedOut,
@@ -286,12 +318,14 @@ function createResult(
     aborted?: boolean;
     assistantTexts?: string[];
     currentAttemptAssistant?: AssistantMessage;
+    downgradedFromResume?: boolean;
     externalAbort?: boolean;
     itemLifecycle?: { activeCount: number; completedCount: number; startedCount: number };
     lastAssistant?: AssistantMessage;
     messagesSnapshot: AgentMessage[];
     now: () => number;
     promptError: Error | undefined;
+    resumeFailureRecovered?: boolean;
     sdkSessionId?: string;
     sessionIdUsed?: string;
     timedOut?: boolean;
@@ -301,7 +335,13 @@ function createResult(
 ): AttemptResultWithSdkSessionId {
   const promptError = state.promptError;
   const timedOut = state.timedOut === true;
-  const replayHadPotentialSideEffects = timedOut;
+  const replayMetadata = computeReplayMetadata({
+    priorReplayInvalid: params.initialReplayState?.replayInvalid,
+    priorHadPotentialSideEffects: params.initialReplayState?.hadPotentialSideEffects,
+    thisAttemptTimedOut: timedOut,
+    thisAttemptDowngradedFromResume: state.downgradedFromResume,
+    thisAttemptResumeFailureRecovered: state.resumeFailureRecovered,
+  });
   return {
     aborted: state.aborted === true,
     ...(state.sdkSessionId ? { sdkSessionId: state.sdkSessionId } : {}),
@@ -324,10 +364,7 @@ function createResult(
     messagingToolSentTexts: [],
     promptError,
     promptErrorSource: promptError ? "prompt" : null,
-    replayMetadata: {
-      hadPotentialSideEffects: replayHadPotentialSideEffects,
-      replaySafe: !replayHadPotentialSideEffects,
-    },
+    replayMetadata,
     sessionFileUsed: readString(params.sessionFile),
     sessionIdUsed: state.sessionIdUsed ?? readString(params.sessionId) ?? "copilot-sdk-session",
     timedOut,
