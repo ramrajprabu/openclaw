@@ -12,6 +12,7 @@ import {
   type OnAssistantDeltaPayload,
   type SessionLike,
 } from "./event-bridge.js";
+import { createHooksBridge, type CopilotSdkHooksConfig } from "./hooks-bridge.js";
 import {
   createPermissionBridge,
   rejectAllPolicy,
@@ -43,6 +44,7 @@ type AttemptParamsLike = AgentHarnessAttemptParams & {
   };
   copilotHome?: string;
   cwd?: string;
+  hooksConfig?: CopilotSdkHooksConfig;
   initialReplayState?: AgentHarnessAttemptParams["initialReplayState"] & { sdkSessionId?: string };
   messages?: AgentMessage[];
   model?: string | { api?: string; id?: string; provider?: string };
@@ -348,6 +350,7 @@ function createSessionConfig(
   sdkTools: SdkTool[],
 ): Pick<
   SessionConfig,
+  | "hooks"
   | "model"
   | "onPermissionRequest"
   | "onUserInputRequest"
@@ -357,6 +360,7 @@ function createSessionConfig(
 > {
   const permissionPolicy = params.permissionPolicy ?? rejectAllPolicy;
   const userInputPolicy = params.userInputPolicy ?? denyAllUserInputPolicy;
+  const hooks = createHooksBridge(params.hooksConfig);
   return {
     model: sdkModelId,
     // Permission decisions flow through permission-bridge. The default
@@ -371,6 +375,11 @@ function createSessionConfig(
     // wiring layer can inject `delegatingUserInputPolicy({ onRequest })`
     // that calls into the host's channel/TUI prompt path (commitments/).
     onUserInputRequest: createUserInputBridge(userInputPolicy),
+    // SessionHooks: only set when the host actually supplied handlers.
+    // createHooksBridge returns undefined for an empty config so we
+    // never install an empty hooks subsystem. See hooks-bridge.ts for
+    // the back-pointer to src/agents/harness/lifecycle-hook-helpers.ts.
+    ...(hooks ? { hooks } : {}),
     reasoningEffort: params.reasoningEffort,
     tools: sdkTools,
     workingDirectory: readString(params.workspaceDir) ?? readString(params.cwd),
