@@ -17,7 +17,7 @@ export type AgentHarnessRuntimeKind =
   | "plugin-harness";
 
 export type AgentHarnessRuntimeDescriptor = {
-  /** Runtime id as it appears in config / CLI (`--harness <id>`). */
+  /** Runtime id as it appears in config (`agentRuntime.id`). */
   readonly id: string;
   /** Semantic category (see AgentHarnessRuntimeKind). */
   readonly kind: AgentHarnessRuntimeKind;
@@ -42,7 +42,7 @@ export const AGENT_HARNESS_RUNTIME_DESCRIPTORS = [
     id: "copilot-sdk",
     kind: "plugin-harness",
     label: "GitHub Copilot SDK",
-    builtinPluginId: "@openclaw/copilot-sdk-harness",
+    builtinPluginId: "@openclaw/copilot-sdk",
   },
 ] as const satisfies readonly AgentHarnessRuntimeDescriptor[];
 

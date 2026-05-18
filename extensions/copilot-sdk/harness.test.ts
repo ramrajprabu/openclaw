@@ -159,28 +159,6 @@ describe("createCopilotSdkAgentHarness", () => {
     }
   });
 
-  it("supports accepts custom providerIds from options", () => {
-    const harness = createCopilotSdkAgentHarness({ providerIds: [" Anthropic ", "OpenAI"] });
-
-    expect(
-      harness.supports({
-        provider: "anthropic",
-        modelId: "claude-sonnet-4.5",
-        requestedRuntime: "copilot-sdk",
-      }),
-    ).toEqual({ supported: true, priority: 100 });
-    expect(
-      harness.supports({
-        provider: "github-copilot",
-        modelId: "gpt-4.1",
-        requestedRuntime: "copilot-sdk",
-      }),
-    ).toEqual({
-      supported: false,
-      reason: "provider is not one of: anthropic, openai",
-    });
-  });
-
   it("runAttempt lazy-imports attempt by waiting until invocation to create a pool", async () => {
     const pool = makePoolMock();
     mocks.createCopilotClientPool.mockReturnValue(pool);

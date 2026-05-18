@@ -11,11 +11,6 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "providerIds": {
-        "type": "array",
-        "items": { "type": "string" },
-        "default": ["github-copilot"]
-      },
       "pool": {
         "type": "object",
         "additionalProperties": false,
@@ -30,11 +25,6 @@
     }
   },
   "uiHints": {
-    "providerIds": {
-      "label": "Provider Whitelist",
-      "help": "Provider IDs allowed to use the GitHub Copilot SDK harness when requestedRuntime is copilot-sdk.",
-      "advanced": true
-    },
     "pool": {
       "label": "Client Pool",
       "help": "Advanced GitHub Copilot SDK client pooling controls.",

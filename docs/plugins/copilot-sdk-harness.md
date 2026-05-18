@@ -24,7 +24,7 @@ For the broader model/provider/runtime split, start with
 ## Requirements
 
 - OpenClaw with the bundled `copilot-sdk` extension available.
-- If your config uses `plugins.allow`, include `@openclaw/copilot-sdk-harness`.
+- If your config uses `plugins.allow`, include `@openclaw/copilot-sdk`.
 - A GitHub Copilot subscription that can drive the Copilot CLI (or a
   `gitHubToken` env / auth-profile entry for headless / cron runs).
 - A writable `copilotHome` directory. The harness defaults to
@@ -70,14 +70,7 @@ The harness advertises support for the canonical `github-copilot` provider
 - `github-copilot`
 
 Anything outside that set falls through `selection.ts`'s `auto_pi` branch back
-to PI. BYOK provider adapters can be registered through the harness's
-provider-mapping registry, but at MVP the registry ships with no adapters; see
-[BYOK provider mapping](#byok-provider-mapping) below.
-
-Subscription Copilot providers are **not** registered through the BYOK
-provider-mapping registry. They are claimed by the harness itself and listed
-in `extensions/copilot-sdk/doctor-contract-api.ts` under
-`sessionRouteStateOwners[0].providerIds`.
+to PI.
 
 ## Auth
 
@@ -91,8 +84,6 @@ Per-agent precedence, applied during `runCopilotSdkAttempt`:
    `OPENCLAW_GITHUB_TOKEN` env.
 3. **`profileId` + `profileVersion`** from the attempt input, which resolves
    to an `AuthProfileStore` entry.
-4. **BYOK provider** when the model ref is in a registered BYOK adapter (see
-   below). At MVP no adapters are registered, so this path is reserved.
 
 Each agent gets a dedicated `copilotHome` so Copilot CLI tokens, sessions, and
 config do not leak between agents on the same machine. The default is
@@ -101,7 +92,7 @@ config do not leak between agents on the same machine. The default is
 (for example, a shared mount for migration).
 
 `probeCopilotAuthShape` (see [Doctor and probes](#doctor-and-probes)) is the
-pure shape check that validates which of the four modes above will be used.
+pure shape check that validates which of the three modes above will be used.
 It does not perform a live SDK handshake.
 
 ## Configuration surface
@@ -168,24 +159,6 @@ not surfaced.
 side question settles, so harness `dispose` waits for in-flight side questions
 to drain before tearing the pool down.
 
-## BYOK provider mapping
-
-`extensions/copilot-sdk/src/provider-mapping/` exposes a process-singleton
-registry for BYOK provider adapters. Adapters can be registered at app startup
-to expose non-subscription providers (Anthropic, OpenAI direct, local models,
-etc.) through the Copilot SDK harness path. The registry is:
-
-- Case-insensitive on provider id lookups.
-- Append-only (`registerCopilotSdkProviderMapping` throws on duplicate
-  registrations; treat as programmer error).
-- Distinct from the subscription `github-copilot` provider — that id is
-  claimed by the harness, not the registry.
-
-At MVP the registry ships with no adapters, so
-`supportsCopilotSdkByokProvider(<any-id>)` returns `false`. Use the
-`__resetCopilotSdkProviderMappingsForTests` / `__listCopilotSdkProviderMappingsForTests`
-test helpers when writing adapter PRs.
-
 ## Doctor and probes
 
 `extensions/copilot-sdk/doctor-contract-api.ts` is auto-loaded by
@@ -212,8 +185,9 @@ real Copilot CLI or touch the host fs.
 
 ## Limitations
 
-- The harness only claims subscription Copilot providers at MVP. BYOK is
-  framework-only; expect adapter PRs to land incrementally.
+- The harness only claims the canonical `github-copilot` provider at MVP.
+  Additional providers (BYOK or otherwise) should land in follow-up PRs that
+  ship the adapter alongside the wire-up.
 - The harness does not deliver TUI; PI's TUI is unaffected and remains the
   fallback for whatever runtimes do not have a peer surface.
 - PI session state is not migrated when an agent switches to `copilot-sdk`.

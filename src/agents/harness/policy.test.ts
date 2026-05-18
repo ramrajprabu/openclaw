@@ -89,7 +89,7 @@ describe("agent harness runtime policy", () => {
     expect(copilotSdk).toBeDefined();
     expect(copilotSdk?.kind).toBe("plugin-harness");
     expect(copilotSdk?.label).toBe("GitHub Copilot SDK");
-    expect(copilotSdk?.builtinPluginId).toBe("@openclaw/copilot-sdk-harness");
+    expect(copilotSdk?.builtinPluginId).toBe("@openclaw/copilot-sdk");
   });
 
   it("classifies auto as a fallback and codex as an internal runtime alias", () => {

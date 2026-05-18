@@ -14,12 +14,11 @@ import type { CopilotClientPool, CopilotClientPoolOptions, PooledClient } from "
 
 export type { CopilotClientPool, CopilotClientPoolOptions };
 
-const DEFAULT_COPILOT_SDK_PROVIDER_IDS = new Set(["github-copilot"]);
+const COPILOT_SDK_PROVIDER_IDS: ReadonlySet<string> = new Set(["github-copilot"]);
 
 export interface CreateCopilotSdkAgentHarnessOptions {
   id?: string;
   label?: string;
-  providerIds?: Iterable<string>;
   pluginConfig?: unknown;
   pool?: CopilotClientPool;
   poolOptions?: CopilotClientPoolOptions;
@@ -80,12 +79,6 @@ function computeSessionCompatKey(params: AgentHarnessAttemptParams): string {
 export function createCopilotSdkAgentHarness(
   options?: CreateCopilotSdkAgentHarnessOptions,
 ): AgentHarness {
-  const providerIds = new Set(
-    [...(options?.providerIds ?? DEFAULT_COPILOT_SDK_PROVIDER_IDS)].map((id) =>
-      id.trim().toLowerCase(),
-    ),
-  );
-
   let poolPromise: Promise<CopilotClientPool> | undefined;
   let createdPool: CopilotClientPool | undefined;
   let disposed = false;
@@ -121,10 +114,10 @@ export function createCopilotSdkAgentHarness(
         return { supported: false, reason: "copilot-sdk is opt-in only" };
       }
       const provider = ctx.provider.trim().toLowerCase();
-      if (!providerIds.has(provider)) {
+      if (!COPILOT_SDK_PROVIDER_IDS.has(provider)) {
         return {
           supported: false,
-          reason: `provider is not one of: ${[...providerIds].toSorted().join(", ")}`,
+          reason: `provider is not one of: ${[...COPILOT_SDK_PROVIDER_IDS].toSorted().join(", ")}`,
         };
       }
       return { supported: true, priority: 100 };

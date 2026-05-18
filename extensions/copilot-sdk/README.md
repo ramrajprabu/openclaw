@@ -10,6 +10,6 @@ embedded runtime.
 
 See [Copilot SDK harness](../../docs/plugins/copilot-sdk-harness.md) for
 configuration, doctor probes, transcript mirroring, compaction, side
-questions, replay, BYOK provider-mapping, and the supported-surface contract.
+questions, replay, and the supported-surface contract.
 See [qa/copilot-sdk-capabilities.md](../../qa/copilot-sdk-capabilities.md)
 for the SDK capability inventory the harness is pinned to.

@@ -44,9 +44,7 @@ export function normalizeCompatibilityConfig({ cfg }: { cfg: OpenClawConfig }): 
  *
  * - id / label: Identify the extension in doctor output.
  * - providerIds: The subscription Copilot providers (kept in sync
- *   with `SUPPORTED_PROVIDERS` in attempt.ts). BYOK provider ids
- *   that get registered via `provider-mapping/` are NOT listed here;
- *   they belong to whichever extension registered them.
+ *   with `SUPPORTED_PROVIDERS` in attempt.ts).
  * - runtimeIds: Our harness id (matches harness.ts `id` field).
  * - cliSessionKeys: Session keys this harness writes; doctor uses
  *   this when pruning stale CLI session state.

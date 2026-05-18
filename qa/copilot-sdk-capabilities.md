@@ -2,7 +2,7 @@
 
 > Public preview audit for the `1.0.0-beta.4` pin. Per task contract, treat this as the current `latest` dist-tag snapshot and re-generate this document whenever the pinned SDK version changes.
 
-This inventory exists to de-risk `docs/proposals/copilot-sdk-harness` by documenting the shipped TypeScript surface instead of guessing. Every claim below is tied to the installed SDK's `.d.ts` files and bundled docs; where the inventory is silent, this document says so explicitly.
+This inventory documents the shipped TypeScript surface that the bundled `copilot-sdk` plugin pins against, instead of guessing. Every claim below is tied to the installed SDK's `.d.ts` files and bundled docs; where the inventory is silent, this document says so explicitly.
 
 ## 1. Package metadata
 

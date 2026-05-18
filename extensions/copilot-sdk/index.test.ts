@@ -105,42 +105,8 @@ describe("copilot-sdk plugin", () => {
     expect(onConversationBindingResolved).not.toHaveBeenCalled();
   });
 
-  it("uses configured providerIds as the harness whitelist", () => {
-    const { harness } = registerWithPluginConfig({ providerIds: [" Anthropic ", "OpenAI"] });
-
-    expect(
-      harness.supports({
-        provider: "anthropic",
-        modelId: "claude-sonnet-4.5",
-        requestedRuntime: "copilot-sdk",
-      }),
-    ).toEqual({ supported: true, priority: 100 });
-    expect(
-      harness.supports({
-        provider: "github-copilot",
-        modelId: "gpt-4.1",
-        requestedRuntime: "copilot-sdk",
-      }),
-    ).toEqual({
-      supported: false,
-      reason: "provider is not one of: anthropic, openai",
-    });
-  });
-
-  it("falls back to the default provider whitelist when providerIds is missing", () => {
+  it("registers a harness hard-bound to the canonical github-copilot provider", () => {
     const { harness } = registerWithPluginConfig({});
-
-    expect(
-      harness.supports({
-        provider: "github-copilot",
-        modelId: "gpt-4.1",
-        requestedRuntime: "copilot-sdk",
-      }),
-    ).toEqual({ supported: true, priority: 100 });
-  });
-
-  it("falls back to the default provider whitelist when providerIds is malformed", () => {
-    const { harness } = registerWithPluginConfig({ providerIds: "anthropic" });
 
     expect(
       harness.supports({
