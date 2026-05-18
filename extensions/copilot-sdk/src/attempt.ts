@@ -35,7 +35,7 @@ import {
   type CopilotSdkUserInputPolicy,
 } from "./user-input-bridge.js";
 
-const SUPPORTED_PROVIDERS = new Set(["github", "openclaw", "copilot"]);
+const SUPPORTED_PROVIDERS = new Set(["github-copilot"]);
 
 type AttemptResultWithSdkSessionId = AgentHarnessAttemptResult & { sdkSessionId?: string };
 type PromptErrorWithCode = Error & { code?: string; cause?: unknown };

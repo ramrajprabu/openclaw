@@ -125,13 +125,13 @@ function createAttemptParams(params: {
     model: {
       api: "openai-responses",
       id: "gpt-4.1",
-      provider: "github",
+      provider: "github-copilot",
     },
     modelId: "gpt-4.1",
     onAssistantDelta: params.onAssistantDelta,
     profileVersion,
     prompt: params.prompt,
-    provider: "github",
+    provider: "github-copilot",
     runId: `copilot-sdk-live-smoke-${now}`,
     sessionFile: "copilot-sdk-live-smoke.session.json",
     sessionId: `copilot-sdk-live-smoke-session-${now}`,
@@ -150,7 +150,7 @@ describeLive("copilot-sdk harness live smoke", () => {
 
     expect(
       harness.supports({
-        provider: "github",
+        provider: "github-copilot",
         modelId: "gpt-4.1",
         requestedRuntime: "copilot-sdk",
       }),

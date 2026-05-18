@@ -81,7 +81,7 @@ function makeParams(overrides: Record<string, unknown> = {}): any {
   return {
     cfg: {},
     agentDir: "/agents",
-    provider: "github",
+    provider: "github-copilot",
     model: "gpt-4.1",
     question: "what is the capital of france?",
     sessionEntry: {} as any,

@@ -34,9 +34,7 @@ export interface CopilotSdkToolBridge {
 }
 
 export const SUPPORTED_TOOL_PROVIDERS: ReadonlySet<string> = new Set([
-  "github",
-  "openclaw",
-  "copilot",
+  "github-copilot",
 ]);
 
 export function supportsModelTools(modelProvider: string): boolean {

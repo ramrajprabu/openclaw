@@ -14,7 +14,7 @@
       "providerIds": {
         "type": "array",
         "items": { "type": "string" },
-        "default": ["github", "openclaw", "copilot"]
+        "default": ["github-copilot"]
       },
       "pool": {
         "type": "object",

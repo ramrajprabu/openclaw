@@ -117,7 +117,7 @@ describe("copilot-sdk plugin", () => {
     ).toEqual({ supported: true, priority: 100 });
     expect(
       harness.supports({
-        provider: "github",
+        provider: "github-copilot",
         modelId: "gpt-4.1",
         requestedRuntime: "copilot-sdk",
       }),
@@ -132,7 +132,7 @@ describe("copilot-sdk plugin", () => {
 
     expect(
       harness.supports({
-        provider: "github",
+        provider: "github-copilot",
         modelId: "gpt-4.1",
         requestedRuntime: "copilot-sdk",
       }),
@@ -144,7 +144,7 @@ describe("copilot-sdk plugin", () => {
 
     expect(
       harness.supports({
-        provider: "github",
+        provider: "github-copilot",
         modelId: "gpt-4.1",
         requestedRuntime: "copilot-sdk",
       }),

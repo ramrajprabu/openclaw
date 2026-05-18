@@ -57,7 +57,7 @@ export const sessionRouteStateOwners: DoctorSessionRouteStateOwner[] = [
   {
     id: "copilot-sdk",
     label: "GitHub Copilot SDK",
-    providerIds: ["github", "openclaw", "copilot"],
+    providerIds: ["github-copilot"],
     runtimeIds: ["copilot-sdk"],
     cliSessionKeys: ["copilot-sdk"],
     authProfilePrefixes: ["copilot-sdk:"],

@@ -19,8 +19,7 @@ selection, OpenClaw dynamic tools (bridged), approvals, media delivery, the
 visible transcript mirror, and `openclaw doctor`.
 
 For the broader model/provider/runtime split, start with
-[Agent runtimes](/concepts/agent-runtimes); for the harness decision
-specifically, see [Agent harnesses](/concepts/agent-harnesses).
+[Agent runtimes](/concepts/agent-runtimes).
 
 ## Requirements
 
@@ -47,9 +46,9 @@ Pin one model (or one provider) to the harness:
 {
   agents: {
     defaults: {
-      model: "github/gpt-5.5",
+      model: "github-copilot/gpt-5.5",
       models: {
-        "github/gpt-5.5": {
+        "github-copilot/gpt-5.5": {
           agentRuntime: { id: "copilot-sdk" },
         },
       },
@@ -58,16 +57,17 @@ Pin one model (or one provider) to the harness:
 }
 ```
 
-Both routes are documented in detail in
-[Agent harnesses → Opting in](/concepts/agent-harnesses#opting-in-to-the-copilot-sdk-harness).
+Both routes are equivalent. Use `agentRuntime.id` on a single model entry
+when only that model should be routed through the harness; set
+`runtime.id` on a provider when every model under that provider should use
+it.
 
 ## Supported providers
 
-The harness advertises support for the subscription Copilot provider set:
+The harness advertises support for the canonical `github-copilot` provider
+(the same id owned by `extensions/github-copilot`):
 
-- `github`
-- `openclaw`
-- `copilot`
+- `github-copilot`
 
 Anything outside that set falls through `selection.ts`'s `auto_pi` branch back
 to PI. BYOK provider adapters can be registered through the harness's
@@ -178,8 +178,8 @@ etc.) through the Copilot SDK harness path. The registry is:
 - Case-insensitive on provider id lookups.
 - Append-only (`registerCopilotSdkProviderMapping` throws on duplicate
   registrations; treat as programmer error).
-- Distinct from subscription Copilot providers — `github`, `openclaw`, and
-  `copilot` are claimed by the harness, not the registry.
+- Distinct from the subscription `github-copilot` provider — that id is
+  claimed by the harness, not the registry.
 
 At MVP the registry ships with no adapters, so
 `supportsCopilotSdkByokProvider(<any-id>)` returns `false`. Use the
@@ -194,8 +194,8 @@ test helpers when writing adapter PRs.
 - An empty `legacyConfigRules` (no retired fields at MVP).
 - A no-op `normalizeCompatibilityConfig` (kept so future field retirements
   have a stable in-tree home).
-- One `sessionRouteStateOwners` entry claiming providers `github`, `openclaw`,
-  `copilot`; runtime `copilot-sdk`; CLI session key `copilot-sdk`; auth profile
+- One `sessionRouteStateOwners` entry claiming provider `github-copilot`;
+  runtime `copilot-sdk`; CLI session key `copilot-sdk`; auth profile
   prefix `copilot-sdk:`.
 
 `extensions/copilot-sdk/src/doctor-probes.ts` exports three imperative probes
@@ -221,7 +221,6 @@ real Copilot CLI or touch the host fs.
 
 ## Related
 
-- [Agent harnesses](/concepts/agent-harnesses)
 - [Agent runtimes](/concepts/agent-runtimes)
 - [Codex harness](/plugins/codex-harness)
 - [Agent harness plugins (SDK reference)](/plugins/sdk-agent-harness)

@@ -42,8 +42,7 @@ There are two runtime families:
 
 The `copilot-sdk` harness is a separate, opt-in plugin harness for the
 GitHub Copilot CLI; see [Copilot SDK harness](/plugins/copilot-sdk-harness)
-and [Agent harnesses](/concepts/agent-harnesses) for the user-facing decision
-between PI, Codex, and Copilot SDK.
+for the user-facing decision between PI, Codex, and Copilot SDK.
 
 ## Codex surfaces
 
@@ -207,17 +206,16 @@ If `openclaw doctor` warns that the `codex` plugin is enabled while
 
 The bundled `copilot-sdk` extension registers an opt-in `copilot-sdk` runtime
 backed by the GitHub Copilot CLI (`@github/copilot-sdk`). It claims the
-subscription Copilot provider set (`github`, `openclaw`, `copilot`) and is
-**never** selected by `auto`. Opt in per-model or per-provider via
-`agentRuntime.id`:
+canonical subscription `github-copilot` provider and is **never** selected by
+`auto`. Opt in per-model or per-provider via `agentRuntime.id`:
 
 ```json5
 {
   agents: {
     defaults: {
-      model: "github/gpt-5.5",
+      model: "github-copilot/gpt-5.5",
       models: {
-        "github/gpt-5.5": {
+        "github-copilot/gpt-5.5": {
           agentRuntime: { id: "copilot-sdk" },
         },
       },
@@ -226,13 +224,11 @@ subscription Copilot provider set (`github`, `openclaw`, `copilot`) and is
 }
 ```
 
-The harness claims its providers, runtime, CLI session key, and auth profile
+The harness claims its provider, runtime, CLI session key, and auth profile
 prefix in `extensions/copilot-sdk/doctor-contract-api.ts`, which
 `openclaw doctor` auto-loads. For configuration, auth, transcript mirroring,
-compaction, and the doctor probe surface, see
-[Copilot SDK harness](/plugins/copilot-sdk-harness). For the broader
-PI vs Codex vs Copilot SDK decision, see
-[Agent harnesses](/concepts/agent-harnesses).
+compaction, the doctor probe surface, and the broader PI vs Codex vs Copilot
+SDK decision, see [Copilot SDK harness](/plugins/copilot-sdk-harness).
 
 ## Compatibility contract
 
@@ -267,7 +263,6 @@ runtime policy first. Legacy session runtime pins no longer decide routing.
 
 ## Related
 
-- [Agent harnesses](/concepts/agent-harnesses)
 - [Codex harness](/plugins/codex-harness)
 - [Codex harness runtime](/plugins/codex-harness-runtime)
 - [Copilot SDK harness](/plugins/copilot-sdk-harness)

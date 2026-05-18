@@ -23,7 +23,7 @@ vi.mock("./src/runtime.js", () => ({
   createCopilotClientPool: mocks.createCopilotClientPool,
 }));
 
-const ATTEMPT_PARAMS = { provider: "github", model: "gpt-4.1" } as any;
+const ATTEMPT_PARAMS = { provider: "github-copilot", model: "gpt-4.1" } as any;
 const ATTEMPT_RESULT = { ok: true } as any;
 
 function makePoolMock(): CopilotClientPool {
@@ -77,7 +77,7 @@ describe("createCopilotSdkAgentHarness", () => {
     const harness = createCopilotSdkAgentHarness();
 
     expect(
-      harness.supports({ provider: "github", modelId: "gpt-4.1", requestedRuntime: "auto" }),
+      harness.supports({ provider: "github-copilot", modelId: "gpt-4.1", requestedRuntime: "auto" }),
     ).toEqual({
       supported: false,
       reason: "copilot-sdk is opt-in only",
@@ -88,38 +88,19 @@ describe("createCopilotSdkAgentHarness", () => {
     const harness = createCopilotSdkAgentHarness();
 
     expect(
-      harness.supports({ provider: "github", modelId: "gpt-4.1", requestedRuntime: "pi" }),
+      harness.supports({ provider: "github-copilot", modelId: "gpt-4.1", requestedRuntime: "pi" }),
     ).toEqual({
       supported: false,
       reason: "copilot-sdk is opt-in only",
     });
   });
 
-  it("supports returns true for requestedRuntime copilot-sdk with github provider", () => {
+  it("supports returns true for requestedRuntime copilot-sdk with github-copilot provider", () => {
     const harness = createCopilotSdkAgentHarness();
 
     expect(
       harness.supports({
-        provider: "github",
-        modelId: "gpt-4.1",
-        requestedRuntime: "copilot-sdk",
-      }),
-    ).toEqual({ supported: true, priority: 100 });
-  });
-
-  it("supports returns true for openclaw and copilot providers", () => {
-    const harness = createCopilotSdkAgentHarness();
-
-    expect(
-      harness.supports({
-        provider: "openclaw",
-        modelId: "gpt-4.1",
-        requestedRuntime: "copilot-sdk",
-      }),
-    ).toEqual({ supported: true, priority: 100 });
-    expect(
-      harness.supports({
-        provider: "copilot",
+        provider: "github-copilot",
         modelId: "gpt-4.1",
         requestedRuntime: "copilot-sdk",
       }),
@@ -131,7 +112,7 @@ describe("createCopilotSdkAgentHarness", () => {
 
     expect(
       harness.supports({
-        provider: "  GitHub  ",
+        provider: "  GitHub-Copilot  ",
         modelId: "gpt-4.1",
         requestedRuntime: "copilot-sdk",
       }),
@@ -143,7 +124,7 @@ describe("createCopilotSdkAgentHarness", () => {
 
     expect(
       harness.supports({
-        provider: "github",
+        provider: "github-copilot",
         modelId: "gpt-4.1",
         requestedRuntime: "  COPILOT-SDK  " as any,
       }),
@@ -161,8 +142,21 @@ describe("createCopilotSdkAgentHarness", () => {
       }),
     ).toEqual({
       supported: false,
-      reason: "provider is not one of: copilot, github, openclaw",
+      reason: "provider is not one of: github-copilot",
     });
+    // Legacy aspirational ids should not be claimed by the harness.
+    for (const legacyId of ["github", "openclaw", "copilot"]) {
+      expect(
+        harness.supports({
+          provider: legacyId,
+          modelId: "gpt-4.1",
+          requestedRuntime: "copilot-sdk",
+        }),
+      ).toEqual({
+        supported: false,
+        reason: "provider is not one of: github-copilot",
+      });
+    }
   });
 
   it("supports accepts custom providerIds from options", () => {
@@ -177,7 +171,7 @@ describe("createCopilotSdkAgentHarness", () => {
     ).toEqual({ supported: true, priority: 100 });
     expect(
       harness.supports({
-        provider: "github",
+        provider: "github-copilot",
         modelId: "gpt-4.1",
         requestedRuntime: "copilot-sdk",
       }),
@@ -508,8 +502,8 @@ describe("createCopilotSdkAgentHarness", () => {
 
     function makeAttemptParams(overrides: Record<string, unknown> = {}): any {
       return {
-        provider: "github",
-        model: { provider: "github", id: "gpt-4.1" },
+        provider: "github-copilot",
+        model: { provider: "github-copilot", id: "gpt-4.1" },
         cwd: "/ws",
         workspaceDir: "/ws",
         agentDir: "/home",
@@ -575,10 +569,10 @@ describe("createCopilotSdkAgentHarness", () => {
       const harness = createCopilotSdkAgentHarness({ pool });
 
       await harness.runAttempt(
-        makeAttemptParams({ runId: "t1", model: { provider: "github", id: "gpt-4.1" } }),
+        makeAttemptParams({ runId: "t1", model: { provider: "github-copilot", id: "gpt-4.1" } }),
       );
       await harness.runAttempt(
-        makeAttemptParams({ runId: "t2", model: { provider: "github", id: "claude-sonnet-4.5" } }),
+        makeAttemptParams({ runId: "t2", model: { provider: "github-copilot", id: "claude-sonnet-4.5" } }),
       );
 
       const secondCallParams = mocks.runCopilotSdkAttempt.mock.calls[1]?.[0] as {
@@ -807,7 +801,7 @@ describe("createCopilotSdkAgentHarness", () => {
     it("delegates to runCopilotSdkSideQuestion with the pool", async () => {
       const pool = makePoolMock();
       const harness = createCopilotSdkAgentHarness({ pool });
-      const params = { provider: "github", model: "gpt-4.1", question: "hi?" } as any;
+      const params = { provider: "github-copilot", model: "gpt-4.1", question: "hi?" } as any;
 
       const result = await harness.runSideQuestion?.(params);
 

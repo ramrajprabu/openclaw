@@ -30,7 +30,7 @@ describe("copilot-sdk doctor contract", () => {
 
   it("claims the subscription Copilot providers (matches attempt.ts SUPPORTED_PROVIDERS)", () => {
     const owner = sessionRouteStateOwners[0]!;
-    expect(owner.providerIds).toEqual(["github", "openclaw", "copilot"]);
+    expect(owner.providerIds).toEqual(["github-copilot"]);
   });
 
   it("claims the copilot-sdk runtime, session key, and auth profile prefix", () => {

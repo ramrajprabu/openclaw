@@ -5,7 +5,7 @@ import { attachEventBridge, type SessionLike } from "./event-bridge.js";
 const MODEL_REF = {
   api: "openai-responses",
   id: "gpt-5",
-  provider: "github",
+  provider: "github-copilot",
 } as const;
 const REGISTERED_EVENT_TYPES = [
   "assistant.message_delta",
@@ -390,7 +390,7 @@ describe("attachEventBridge", () => {
         },
       ],
       model: "gpt-5",
-      provider: "github",
+      provider: "github-copilot",
       role: "assistant",
       stopReason: "toolUse",
       timestamp: 9,

@@ -14,7 +14,7 @@ import type { CopilotClientPool, CopilotClientPoolOptions, PooledClient } from "
 
 export type { CopilotClientPool, CopilotClientPoolOptions };
 
-const DEFAULT_COPILOT_SDK_PROVIDER_IDS = new Set(["github", "openclaw", "copilot"]);
+const DEFAULT_COPILOT_SDK_PROVIDER_IDS = new Set(["github-copilot"]);
 
 export interface CreateCopilotSdkAgentHarnessOptions {
   id?: string;

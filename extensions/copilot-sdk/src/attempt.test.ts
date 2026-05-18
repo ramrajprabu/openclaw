@@ -205,7 +205,7 @@ function makeParams(
     model: {
       api: "openai-responses",
       id: "gpt-4o",
-      provider: "github",
+      provider: "github-copilot",
       ...(typeof overrides.model === "object" ? overrides.model : {}),
     },
     prompt: "hello",
@@ -540,7 +540,7 @@ describe("runCopilotSdkAttempt", () => {
       agentDir: "C:\\copilot-home",
       agentId: "agent-1",
       modelId: "gpt-4o",
-      modelProvider: "github",
+      modelprovider: "github-copilot",
       sessionId: "session-1",
       sessionKey: undefined,
       workspaceDir: "C:\\workspace",
@@ -831,14 +831,14 @@ describe("runCopilotSdkAttempt", () => {
     const pool = makeFakePool(sdk);
 
     const result = await runCopilotSdkAttempt(
-      makeParams({ model: "gpt-4.1" as never, provider: "github" } as never),
+      makeParams({ model: "gpt-4.1" as never, provider: "github-copilot" } as never),
       { now: () => 123, pool },
     );
 
     expect(getPromptErrorCode(result)).toBeUndefined();
     expect(sdk.createSession).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-4.1" }));
     expect(result.currentAttemptAssistant).toEqual(
-      expect.objectContaining({ provider: "github", timestamp: 123 }),
+      expect.objectContaining({ provider: "github-copilot", timestamp: 123 }),
     );
   });
 
