@@ -7,11 +7,16 @@ import { createCopilotSdkAgentHarness } from "./harness.js";
 
 const mocks = vi.hoisted(() => ({
   runCopilotSdkAttempt: vi.fn(),
+  runCopilotSdkSideQuestion: vi.fn(),
   createCopilotClientPool: vi.fn(),
 }));
 
 vi.mock("./src/attempt.js", () => ({
   runCopilotSdkAttempt: mocks.runCopilotSdkAttempt,
+}));
+
+vi.mock("./src/side-question.js", () => ({
+  runCopilotSdkSideQuestion: mocks.runCopilotSdkSideQuestion,
 }));
 
 vi.mock("./src/runtime.js", () => ({
@@ -47,8 +52,10 @@ async function flushAsyncWork() {
 describe("createCopilotSdkAgentHarness", () => {
   beforeEach(() => {
     mocks.runCopilotSdkAttempt.mockReset();
+    mocks.runCopilotSdkSideQuestion.mockReset();
     mocks.createCopilotClientPool.mockReset();
     mocks.runCopilotSdkAttempt.mockResolvedValue(ATTEMPT_RESULT);
+    mocks.runCopilotSdkSideQuestion.mockResolvedValue({ text: "answer" });
     mocks.createCopilotClientPool.mockImplementation(() => makePoolMock());
   });
 
@@ -619,6 +626,64 @@ describe("createCopilotSdkAgentHarness", () => {
       expect(result?.failure?.reason).toBe("marker-write-failed");
       expect(typeof result?.failure?.rawError).toBe("string");
       expect(result?.failure?.rawError?.length ?? 0).toBeGreaterThan(0);
+    });
+  });
+
+  describe("runSideQuestion", () => {
+    it("delegates to runCopilotSdkSideQuestion with the pool", async () => {
+      const pool = makePoolMock();
+      const harness = createCopilotSdkAgentHarness({ pool });
+      const params = { provider: "github", model: "gpt-4.1", question: "hi?" } as any;
+
+      const result = await harness.runSideQuestion?.(params);
+
+      expect(result).toEqual({ text: "answer" });
+      expect(mocks.runCopilotSdkSideQuestion).toHaveBeenCalledTimes(1);
+      expect(mocks.runCopilotSdkSideQuestion).toHaveBeenCalledWith(
+        params,
+        expect.objectContaining({ pool }),
+      );
+    });
+
+    it("throws when called after dispose", async () => {
+      const harness = createCopilotSdkAgentHarness({ pool: makePoolMock() });
+      await harness.dispose?.();
+      await expect(harness.runSideQuestion?.({ question: "hi?" } as any)).rejects.toThrow(
+        /has been disposed/,
+      );
+      expect(mocks.runCopilotSdkSideQuestion).not.toHaveBeenCalled();
+    });
+
+    it("propagates the side-question error to the caller", async () => {
+      const err = new Error("boom");
+      mocks.runCopilotSdkSideQuestion.mockRejectedValueOnce(err);
+      const harness = createCopilotSdkAgentHarness({ pool: makePoolMock() });
+      await expect(harness.runSideQuestion?.({ question: "hi?" } as any)).rejects.toBe(err);
+    });
+
+    it("dispose waits for in-flight side questions before disposing the pool", async () => {
+      const pool = makePoolMock();
+      const deferred = createDeferred<{ text: string }>();
+      mocks.runCopilotSdkSideQuestion.mockReturnValueOnce(deferred.promise);
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      const sidePromise = harness.runSideQuestion?.({ question: "hi?" } as any);
+      await flushAsyncWork();
+
+      const disposePromise = harness.dispose?.();
+      let disposeSettled = false;
+      void disposePromise?.then(() => {
+        disposeSettled = true;
+      });
+      await flushAsyncWork();
+
+      expect(pool.dispose).not.toHaveBeenCalled();
+      expect(disposeSettled).toBe(false);
+
+      deferred.resolve({ text: "done" });
+      await expect(sidePromise).resolves.toEqual({ text: "done" });
+      await disposePromise;
+      expect(disposeSettled).toBe(true);
     });
   });
 });

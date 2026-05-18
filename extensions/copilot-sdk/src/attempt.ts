@@ -63,6 +63,9 @@ type AttemptParamsLike = AgentHarnessAttemptParams & {
 };
 type ModelRef = { api?: string; id: string; provider: string };
 
+export type { AttemptParamsLike as CopilotSdkPoolAcquireInput, ModelRef };
+export { SUPPORTED_PROVIDERS };
+
 export interface CopilotSdkAttemptDeps {
   pool: CopilotClientPool;
   now?: () => number;
@@ -456,11 +459,11 @@ function readSessionId(session: SessionLike | undefined): string | undefined {
   return readString(session.sessionId) ?? readString(session.id);
 }
 
-function readString(value: unknown): string | undefined {
+export function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function resolveModelRef(params: AttemptParamsLike): ModelRef {
+export function resolveModelRef(params: AttemptParamsLike): ModelRef {
   const rawModel = params.model;
   if (rawModel && typeof rawModel === "object") {
     return {
@@ -484,7 +487,7 @@ function resolveModelRef(params: AttemptParamsLike): ModelRef {
   };
 }
 
-function resolvePoolAcquire(params: AttemptParamsLike): {
+export function resolvePoolAcquire(params: AttemptParamsLike): {
   key: PoolKey;
   options: ClientCreateOptions;
 } {
@@ -519,6 +522,6 @@ function resolvePoolAcquire(params: AttemptParamsLike): {
   };
 }
 
-function toError(error: unknown): Error {
+export function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }

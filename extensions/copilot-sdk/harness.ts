@@ -6,6 +6,8 @@ import type {
   AgentHarnessCompactParams,
   AgentHarnessCompactResult,
   AgentHarnessResetParams,
+  AgentHarnessSideQuestionParams,
+  AgentHarnessSideQuestionResult,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { writeOpenClawCompactionMarker } from "./src/compaction-bridge.js";
 import type { CopilotClientPool, CopilotClientPoolOptions, PooledClient } from "./src/runtime.js";
@@ -110,6 +112,23 @@ export function createCopilotSdkAgentHarness(
         return await attemptPromise;
       } finally {
         inFlight.delete(attemptPromise);
+      }
+    },
+
+    async runSideQuestion(
+      params: AgentHarnessSideQuestionParams,
+    ): Promise<AgentHarnessSideQuestionResult> {
+      if (disposed) {
+        throw new Error("[copilot-sdk] harness has been disposed; cannot run side questions");
+      }
+      const { runCopilotSdkSideQuestion } = await import("./src/side-question.js");
+      const pool = await getPool();
+      const sidePromise = runCopilotSdkSideQuestion(params, { pool });
+      inFlight.add(sidePromise);
+      try {
+        return await sidePromise;
+      } finally {
+        inFlight.delete(sidePromise);
       }
     },
 
