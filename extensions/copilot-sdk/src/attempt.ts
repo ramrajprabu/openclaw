@@ -44,6 +44,7 @@ type AttemptParamsLike = AgentHarnessAttemptParams & {
   };
   copilotHome?: string;
   cwd?: string;
+  enableSessionTelemetry?: boolean;
   hooksConfig?: CopilotSdkHooksConfig;
   initialReplayState?: AgentHarnessAttemptParams["initialReplayState"] & { sdkSessionId?: string };
   messages?: AgentMessage[];
@@ -350,6 +351,7 @@ function createSessionConfig(
   sdkTools: SdkTool[],
 ): Pick<
   SessionConfig,
+  | "enableSessionTelemetry"
   | "hooks"
   | "model"
   | "onPermissionRequest"
@@ -380,6 +382,14 @@ function createSessionConfig(
     // never install an empty hooks subsystem. See hooks-bridge.ts for
     // the back-pointer to src/agents/harness/lifecycle-hook-helpers.ts.
     ...(hooks ? { hooks } : {}),
+    // Session-level telemetry opt-out: only propagate when the host
+    // explicitly set a boolean. undefined means "use SDK default"
+    // (enabled for GitHub auth; disabled when a BYOK provider is set).
+    // Client-level OTel config is plumbed via runtime.ts /
+    // telemetry-bridge.ts.
+    ...(typeof params.enableSessionTelemetry === "boolean"
+      ? { enableSessionTelemetry: params.enableSessionTelemetry }
+      : {}),
     reasoningEffort: params.reasoningEffort,
     tools: sdkTools,
     workingDirectory: readString(params.workspaceDir) ?? readString(params.cwd),

@@ -494,6 +494,57 @@ describe("runCopilotSdkAttempt", () => {
     expect(response.answer).toContain("no user-input policy installed");
   });
 
+  it("enableSessionTelemetry is omitted from createSession when undefined (SDK default)", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+
+    await runCopilotSdkAttempt(makeParams(), { pool });
+
+    const cfg = sdk.createSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect("enableSessionTelemetry" in cfg).toBe(false);
+  });
+
+  it("enableSessionTelemetry: true is propagated to createSession", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+
+    await runCopilotSdkAttempt(makeParams({ enableSessionTelemetry: true } as never), { pool });
+
+    const cfg = sdk.createSession.mock.calls[0]?.[0] as { enableSessionTelemetry?: boolean };
+    expect(cfg.enableSessionTelemetry).toBe(true);
+  });
+
+  it("enableSessionTelemetry: false is propagated to createSession", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+
+    await runCopilotSdkAttempt(makeParams({ enableSessionTelemetry: false } as never), { pool });
+
+    const cfg = sdk.createSession.mock.calls[0]?.[0] as { enableSessionTelemetry?: boolean };
+    expect(cfg.enableSessionTelemetry).toBe(false);
+  });
+
+  it("enableSessionTelemetry is propagated to resumeSession on resume path", async () => {
+    const sdk = makeFakeSdk({
+      onResumeSession: (session) => {
+        session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("resumed"));
+      },
+    });
+    const pool = makeFakePool(sdk);
+
+    await runCopilotSdkAttempt(
+      makeParams({
+        enableSessionTelemetry: false,
+        initialReplayState: { sdkSessionId: "resume-2" },
+      } as never),
+      { pool },
+    );
+
+    expect(sdk.resumeSession).toHaveBeenCalledTimes(1);
+    const cfg = sdk.resumeSession.mock.calls[0]?.[1] as { enableSessionTelemetry?: boolean };
+    expect(cfg.enableSessionTelemetry).toBe(false);
+  });
+
   it("timeout", async () => {
     const sdk = makeFakeSdk({
       onCreateSession: (session) => {
