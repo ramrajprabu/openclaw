@@ -14,12 +14,12 @@ the finished turn to OpenClaw.
 Runtimes are easy to confuse with providers because both show up near model
 configuration. They are different layers:
 
-| Layer         | Examples                              | What it means                                                       |
-| ------------- | ------------------------------------- | ------------------------------------------------------------------- |
-| Provider      | `openai`, `anthropic`, `openai-codex` | How OpenClaw authenticates, discovers models, and names model refs. |
-| Model         | `gpt-5.5`, `claude-opus-4-6`          | The model selected for the agent turn.                              |
-| Agent runtime | `pi`, `codex`, `claude-cli`           | The low level loop or backend that executes the prepared turn.      |
-| Channel       | Telegram, Discord, Slack, WhatsApp    | Where messages enter and leave OpenClaw.                            |
+| Layer         | Examples                                        | What it means                                                       |
+| ------------- | ----------------------------------------------- | ------------------------------------------------------------------- |
+| Provider      | `openai`, `anthropic`, `openai-codex`, `github` | How OpenClaw authenticates, discovers models, and names model refs. |
+| Model         | `gpt-5.5`, `claude-opus-4-6`                    | The model selected for the agent turn.                              |
+| Agent runtime | `pi`, `codex`, `copilot-sdk`, `claude-cli`      | The low level loop or backend that executes the prepared turn.      |
+| Channel       | Telegram, Discord, Slack, WhatsApp              | Where messages enter and leave OpenClaw.                            |
 
 You will also see the word **harness** in code. A harness is the implementation
 that provides an agent runtime. For example, the bundled Codex harness
@@ -33,12 +33,17 @@ There are two runtime families:
 
 - **Embedded harnesses** run inside OpenClaw's prepared agent loop. Today this
   is the built-in `pi` runtime plus registered plugin harnesses such as
-  `codex`.
+  `codex` and `copilot-sdk`.
 - **CLI backends** run a local CLI process while keeping the model ref
   canonical. For example, `anthropic/claude-opus-4-7` with
   a model-scoped `agentRuntime.id: "claude-cli"` means "select the Anthropic
   model, execute through Claude CLI." `claude-cli` is not an embedded harness id
   and must not be passed to AgentHarness selection.
+
+The `copilot-sdk` harness is a separate, opt-in plugin harness for the
+GitHub Copilot CLI; see [Copilot SDK harness](/plugins/copilot-sdk-harness)
+and [Agent harnesses](/concepts/agent-harnesses) for the user-facing decision
+between PI, Codex, and Copilot SDK.
 
 ## Codex surfaces
 
@@ -198,6 +203,37 @@ If `openclaw doctor` warns that the `codex` plugin is enabled while
 `openai-codex/*` remains in config, treat that as legacy route state. Run
 `openclaw doctor --fix` to rewrite it to `openai/*` with the Codex runtime.
 
+## Copilot SDK harness
+
+The bundled `copilot-sdk` extension registers an opt-in `copilot-sdk` runtime
+backed by the GitHub Copilot CLI (`@github/copilot-sdk`). It claims the
+subscription Copilot provider set (`github`, `openclaw`, `copilot`) and is
+**never** selected by `auto`. Opt in per-model, per-provider, or via
+`openclaw agent --local --harness copilot-sdk`:
+
+```json5
+{
+  agents: {
+    defaults: {
+      model: "github/gpt-5.5",
+      models: {
+        "github/gpt-5.5": {
+          agentRuntime: { id: "copilot-sdk" },
+        },
+      },
+    },
+  },
+}
+```
+
+The harness claims its providers, runtime, CLI session key, and auth profile
+prefix in `extensions/copilot-sdk/doctor-contract-api.ts`, which
+`openclaw doctor` auto-loads. For configuration, auth, transcript mirroring,
+compaction, and the doctor probe surface, see
+[Copilot SDK harness](/plugins/copilot-sdk-harness). For the broader
+PI vs Codex vs Copilot SDK decision, see
+[Agent harnesses](/concepts/agent-harnesses).
+
 ## Compatibility contract
 
 When a runtime is not PI, it should document what OpenClaw surfaces it supports.
@@ -231,8 +267,10 @@ runtime policy first. Legacy session runtime pins no longer decide routing.
 
 ## Related
 
+- [Agent harnesses](/concepts/agent-harnesses)
 - [Codex harness](/plugins/codex-harness)
 - [Codex harness runtime](/plugins/codex-harness-runtime)
+- [Copilot SDK harness](/plugins/copilot-sdk-harness)
 - [OpenAI](/providers/openai)
 - [Agent harness plugins](/plugins/sdk-agent-harness)
 - [Agent loop](/concepts/agent-loop)

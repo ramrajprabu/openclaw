@@ -1120,6 +1120,7 @@
                   "concepts/agent",
                   "concepts/agent-loop",
                   "concepts/agent-runtimes",
+                  "concepts/agent-harnesses",
                   "concepts/system-prompt",
                   "concepts/context",
                   "concepts/context-engine",
@@ -1198,6 +1199,7 @@
                 "group": "Bundled plugin guides",
                 "pages": [
                   "plugins/codex-harness",
+                  "plugins/copilot-sdk-harness",
                   "plugins/codex-computer-use",
                   "plugins/google-meet",
                   "plugins/webhooks",
