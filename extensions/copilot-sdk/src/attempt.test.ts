@@ -456,7 +456,7 @@ describe("runCopilotSdkAttempt", () => {
     expect(sdk.createSession).toHaveBeenCalledTimes(0);
   });
 
-  it("placeholder permission handler denies", async () => {
+  it("default permission policy rejects fail-closed", async () => {
     const sdk = makeFakeSdk();
     const pool = makeFakePool(sdk);
 
@@ -464,14 +464,15 @@ describe("runCopilotSdkAttempt", () => {
 
     const handler = (
       sdk.createSession.mock.calls[0]?.[0] as {
-        onPermissionRequest: (request: {
-          kind: string;
-        }) => Promise<{ kind: string; reason?: string }>;
+        onPermissionRequest: (
+          request: { kind: string },
+          invocation: { sessionId: string },
+        ) => Promise<{ kind: string; feedback?: string }>;
       }
     ).onPermissionRequest;
-    const result = await handler({ kind: "write" });
-    expect(result.kind).toBe("deny");
-    expect(result.reason).toContain("permission-bridge");
+    const result = await handler({ kind: "write" }, { sessionId: "sess-1" });
+    expect(result.kind).toBe("reject");
+    expect(result.feedback).toContain("no permission policy installed");
   });
 
   it("placeholder user-input handler throws", async () => {

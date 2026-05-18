@@ -1,8 +1,4 @@
-import type {
-  PermissionRequest as SdkPermissionRequest,
-  SessionConfig,
-  Tool as SdkTool,
-} from "@github/copilot-sdk";
+import type { SessionConfig, Tool as SdkTool } from "@github/copilot-sdk";
 import type {
   AgentHarnessAttemptParams,
   AgentHarnessAttemptResult,
@@ -16,6 +12,11 @@ import {
   type OnAssistantDeltaPayload,
   type SessionLike,
 } from "./event-bridge.js";
+import {
+  createPermissionBridge,
+  rejectAllPolicy,
+  type CopilotSdkPermissionPolicy,
+} from "./permission-bridge.js";
 import type { ClientCreateOptions, CopilotClientPool, PoolKey, PooledClient } from "./runtime.js";
 import { createCopilotSdkToolBridge } from "./tool-bridge.js";
 
@@ -41,6 +42,7 @@ type AttemptParamsLike = AgentHarnessAttemptParams & {
   messages?: AgentMessage[];
   model?: string | { api?: string; id?: string; provider?: string };
   onAssistantDelta?: (payload: OnAssistantDeltaPayload) => void | Promise<void>;
+  permissionPolicy?: CopilotSdkPermissionPolicy;
   profileVersion?: string;
   reasoningEffort?: "low" | "medium" | "high" | "xhigh";
 };
@@ -336,23 +338,15 @@ function createSessionConfig(
   | "tools"
   | "workingDirectory"
 > {
+  const permissionPolicy = params.permissionPolicy ?? rejectAllPolicy;
   return {
     model: sdkModelId,
-    // SAFETY: permission-bridge has not yet been implemented. This placeholder
-    // denies every permission request (fail-closed), and the SDK reports the
-    // denial back to the model. permission-bridge replaces this with the copied
-    // PI tool-policy logic.
-    onPermissionRequest: (async (_request: SdkPermissionRequest) => {
-      return {
-        kind: "deny" as const,
-        reason:
-          "copilot-sdk harness MVP: permissions not yet wired (awaiting permission-bridge todo)",
-      } as unknown as ReturnType<NonNullable<SessionConfig["onPermissionRequest"]>> extends Promise<
-        infer TResult
-      >
-        ? TResult
-        : never;
-    }) as NonNullable<SessionConfig["onPermissionRequest"]>,
+    // Permission decisions flow through permission-bridge. The default
+    // (rejectAllPolicy) keeps the harness fail-closed; the core wiring
+    // layer can inject `delegatingPolicy({ onRequest })` that calls into
+    // the host's PI-style tool-policy decisions. See permission-bridge.ts
+    // for the back-pointer to src/agents/pi-tools.before-tool-call.ts.
+    onPermissionRequest: createPermissionBridge(permissionPolicy),
     // SAFETY: user-input-bridge has not yet been implemented. The placeholder
     // rejects every user-input request. user-input-bridge replaces this with
     // the channel/TUI prompt flow via commitments/.
