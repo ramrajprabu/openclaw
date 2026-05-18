@@ -540,7 +540,7 @@ describe("runCopilotSdkAttempt", () => {
       agentDir: "C:\\copilot-home",
       agentId: "agent-1",
       modelId: "gpt-4o",
-      modelprovider: "github-copilot",
+      modelProvider: "github-copilot",
       sessionId: "session-1",
       sessionKey: undefined,
       workspaceDir: "C:\\workspace",

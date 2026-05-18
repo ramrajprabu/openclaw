@@ -73,11 +73,12 @@ afterEach(() => {
 });
 
 describe("supportsModelTools", () => {
-  it("returns true for supported providers and false otherwise", () => {
-    expect(supportsModelTools("github")).toBe(true);
-    expect(supportsModelTools("openclaw")).toBe(true);
-    expect(supportsModelTools("copilot")).toBe(true);
+  it("returns true for github-copilot and false otherwise", () => {
+    expect(supportsModelTools("github-copilot")).toBe(true);
     expect(supportsModelTools("openai")).toBe(false);
+    expect(supportsModelTools("github")).toBe(false);
+    expect(supportsModelTools("openclaw")).toBe(false);
+    expect(supportsModelTools("copilot")).toBe(false);
     expect(supportsModelTools("")).toBe(false);
   });
 });
@@ -108,7 +109,7 @@ describe("createCopilotSdkToolBridge", () => {
       agentId: "agent-1",
       createOpenClawCodingTools,
       modelId: "gpt-4o",
-      modelProvider: "github",
+      modelProvider: "github-copilot",
       sessionId: "session-1",
       sessionKey: "session-key",
       workspaceDir: "/workspace",
@@ -120,7 +121,7 @@ describe("createCopilotSdkToolBridge", () => {
       agentDir: "/agent",
       agentId: "agent-1",
       modelId: "gpt-4o",
-      modelProvider: "github",
+      modelProvider: "github-copilot",
       sessionId: "session-1",
       sessionKey: "session-key",
       workspaceDir: "/workspace",
@@ -134,7 +135,7 @@ describe("createCopilotSdkToolBridge", () => {
       agentId: "agent-1",
       createOpenClawCodingTools: async () => sourceTools,
       modelId: "gpt-4o",
-      modelProvider: "github",
+      modelProvider: "github-copilot",
       sessionId: "session-1",
     });
 
@@ -149,7 +150,7 @@ describe("createCopilotSdkToolBridge", () => {
         agentId: "agent-1",
         createOpenClawCodingTools: async () => ({ tools: [] }) as never,
         modelId: "gpt-4o",
-        modelProvider: "github",
+        modelProvider: "github-copilot",
         sessionId: "session-1",
       }),
     ).rejects.toThrow("createOpenClawCodingTools must return an array");
@@ -163,7 +164,7 @@ describe("createCopilotSdkToolBridge", () => {
           throw new Error("factory failed");
         },
         modelId: "gpt-4o",
-        modelProvider: "github",
+        modelProvider: "github-copilot",
         sessionId: "session-1",
       }),
     ).rejects.toThrow("factory failed");
@@ -180,7 +181,7 @@ describe("createCopilotSdkToolBridge", () => {
           makeTool({ name: "beta" }),
         ],
         modelId: "gpt-4o",
-        modelProvider: "github",
+        modelProvider: "github-copilot",
         sessionId: "session-1",
       }),
     ).rejects.toThrow("duplicate tool names: alpha, beta");

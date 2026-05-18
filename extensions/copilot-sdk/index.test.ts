@@ -157,7 +157,7 @@ describe("copilot-sdk plugin", () => {
       }),
     ).toEqual({
       supported: false,
-      reason: "provider is not one of: copilot, github, openclaw",
+      reason: "provider is not one of: github-copilot",
     });
   });
 
