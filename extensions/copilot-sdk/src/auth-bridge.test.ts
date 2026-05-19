@@ -83,14 +83,14 @@ describe("resolveCopilotAuth - copilotHome resolution", () => {
     expect(result.copilotHome).toBe(resolve("/explicit/home"));
   });
 
-  it("falls back to agentDir when copilotHome is absent", () => {
+  it("falls back to <agentDir>/copilot when copilotHome is absent", () => {
     const result = resolveCopilotAuth({
       agentId: "agent-1",
       agentDir: "/agent/dir",
       env: cleanEnv(),
       homeDir: fakeHomeDir,
     });
-    expect(result.copilotHome).toBe(resolve("/agent/dir"));
+    expect(result.copilotHome).toBe(resolve(join("/agent/dir", "copilot")));
   });
 
   it("synthesises per-agent default from homeDir when no path is given", () => {
@@ -222,6 +222,89 @@ describe("resolveCopilotAuth - auth mode resolution", () => {
     });
     expect(result.authMode).toBe("useLoggedInUser");
     expect(result.gitHubToken).toBeUndefined();
+  });
+});
+
+describe("resolveCopilotAuth - contract-resolved auth (resolvedApiKey + authProfileId)", () => {
+  it("consumes resolvedApiKey + authProfileId from the EmbeddedRunAttemptParams contract", () => {
+    const result = resolveCopilotAuth({
+      agentId: "agent-1",
+      resolvedApiKey: "contract-token-xyz",
+      authProfileId: "github-copilot:main",
+      env: cleanEnv(),
+      homeDir: fakeHomeDir,
+    });
+    expect(result.authMode).toBe("gitHubToken");
+    expect(result.gitHubToken).toBe("contract-token-xyz");
+    expect(result.authProfileId).toBe("github-copilot:main");
+    expect(result.authProfileVersion).toBe(tokenFingerprint("contract-token-xyz"));
+  });
+
+  it("synthesises authProfileId when contract-resolved token has no profile id", () => {
+    const result = resolveCopilotAuth({
+      agentId: "agent-1",
+      resolvedApiKey: "contract-token-xyz",
+      env: cleanEnv(),
+      homeDir: fakeHomeDir,
+    });
+    expect(result.authMode).toBe("gitHubToken");
+    expect(result.gitHubToken).toBe("contract-token-xyz");
+    expect(result.authProfileId).toBe("pi:resolved");
+    expect(result.authProfileVersion).toBe(tokenFingerprint("contract-token-xyz"));
+  });
+
+  it("auth.useLoggedInUser=true takes precedence over contract resolvedApiKey", () => {
+    const result = resolveCopilotAuth({
+      agentId: "agent-1",
+      auth: { useLoggedInUser: true },
+      resolvedApiKey: "should-be-ignored",
+      authProfileId: "p",
+      env: cleanEnv(),
+      homeDir: fakeHomeDir,
+    });
+    expect(result.authMode).toBe("useLoggedInUser");
+    expect(result.gitHubToken).toBeUndefined();
+  });
+
+  it("explicit auth.gitHubToken takes precedence over contract resolvedApiKey", () => {
+    const result = resolveCopilotAuth({
+      agentId: "agent-1",
+      auth: { gitHubToken: "explicit", profileId: "p", profileVersion: "v1" },
+      resolvedApiKey: "contract-should-be-ignored",
+      authProfileId: "contract-profile",
+      env: cleanEnv(),
+      homeDir: fakeHomeDir,
+    });
+    expect(result.authMode).toBe("gitHubToken");
+    expect(result.gitHubToken).toBe("explicit");
+    expect(result.authProfileId).toBe("p");
+    expect(result.authProfileVersion).toBe("v1");
+  });
+
+  it("contract resolvedApiKey takes precedence over env fallback", () => {
+    const result = resolveCopilotAuth({
+      agentId: "agent-1",
+      resolvedApiKey: "contract-token",
+      authProfileId: "p",
+      env: {
+        OPENCLAW_GITHUB_TOKEN: "env-should-be-ignored",
+        GITHUB_TOKEN: "github-env-should-be-ignored",
+      } as NodeJS.ProcessEnv,
+      homeDir: fakeHomeDir,
+    });
+    expect(result.gitHubToken).toBe("contract-token");
+    expect(result.authProfileId).toBe("p");
+  });
+
+  it("falls back to env when resolvedApiKey is absent", () => {
+    const result = resolveCopilotAuth({
+      agentId: "agent-1",
+      authProfileId: "p",
+      env: { GITHUB_TOKEN: "env-only" } as NodeJS.ProcessEnv,
+      homeDir: fakeHomeDir,
+    });
+    expect(result.gitHubToken).toBe("env-only");
+    expect(result.authProfileId).toBe("env:GITHUB_TOKEN");
   });
 });
 

@@ -29,11 +29,6 @@ import {
 import { classifyResumeFailure, computeReplayMetadata, decideReplayAction } from "./replay-shim.js";
 import type { ClientCreateOptions, CopilotClientPool, PoolKey, PooledClient } from "./runtime.js";
 import { createCopilotSdkToolBridge } from "./tool-bridge.js";
-import {
-  createUserInputBridge,
-  denyAllUserInputPolicy,
-  type CopilotSdkUserInputPolicy,
-} from "./user-input-bridge.js";
 
 const SUPPORTED_PROVIDERS = new Set(["github-copilot"]);
 
@@ -69,7 +64,6 @@ type AttemptParamsLike = AgentHarnessAttemptParams & {
   // dashboard/CLI history shows what the user actually typed, not the
   // internal expansion. Symmetric to `EmbeddedRunAttemptParams.transcriptPrompt`.
   transcriptPrompt?: string;
-  userInputPolicy?: CopilotSdkUserInputPolicy;
 };
 type ModelRef = { api?: string; id: string; provider: string };
 
@@ -500,29 +494,39 @@ function createSessionConfig(
   | "infiniteSessions"
   | "model"
   | "onPermissionRequest"
-  | "onUserInputRequest"
   | "reasoningEffort"
   | "tools"
   | "workingDirectory"
 > {
   const permissionPolicy = params.permissionPolicy ?? rejectAllPolicy;
-  const userInputPolicy = params.userInputPolicy ?? denyAllUserInputPolicy;
   const hooks = createHooksBridge(params.hooksConfig);
   const infiniteSessions = createInfiniteSessionConfig(params.infiniteSessionConfig);
   return {
     model: sdkModelId,
-    // Permission decisions flow through permission-bridge. The default
-    // (rejectAllPolicy) keeps the harness fail-closed; the core wiring
-    // layer can inject `delegatingPolicy({ onRequest })` that calls into
-    // the host's PI-style tool-policy decisions. See permission-bridge.ts
-    // for the back-pointer to src/agents/pi-tools.before-tool-call.ts.
+    // Permission decisions for SDK built-in tool kinds (shell, write,
+    // read, url, mcp, memory, hook) fall through to permission-bridge.
+    // The default (`rejectAllPolicy`) keeps the harness fail-closed,
+    // but in practice the SDK should never invoke any of those because
+    // every bridged tool is registered with `overridesBuiltInTool: true`
+    // and `skipPermission: true` (see tool-bridge.ts), so 100% of tool
+    // calls go through OpenClaw's wrapped `execute()` which runs
+    // `runBeforeToolCallHook` (loop detection, trusted plugin policies,
+    // before-tool-call hooks, two-phase plugin approval). This mirrors
+    // the in-tree codex harness's split: bridged-tool enforcement
+    // happens inside the tool wrapper, and the SDK gate is a safety
+    // net for kinds we don't surface. See permission-bridge.ts and
+    // docs/plugins/copilot-sdk-harness.md.
     onPermissionRequest: createPermissionBridge(permissionPolicy),
-    // User-input requests flow through user-input-bridge. The default
-    // (denyAllUserInputPolicy) returns a synthetic answer so the model
-    // sees a real string rather than a generic RPC failure; the core
-    // wiring layer can inject `delegatingUserInputPolicy({ onRequest })`
-    // that calls into the host's channel/TUI prompt path (commitments/).
-    onUserInputRequest: createUserInputBridge(userInputPolicy),
+    // `onUserInputRequest` is intentionally NOT registered: per the SDK
+    // contract, omitting the handler hides the `ask_user` tool from the
+    // model entirely. This is the MVP posture — interactive ask_user
+    // requires routing the request to the OpenClaw channel/TUI prompt
+    // path (mirroring extensions/codex/src/app-server/user-input-bridge.ts),
+    // which is tracked as a follow-up. With the handler absent, agents
+    // running under this harness must make best-judgment decisions from
+    // the initial prompt rather than asking clarifying questions
+    // mid-turn. See user-input-bridge.ts for the dormant policy
+    // scaffolding the follow-up will reuse.
     // SessionHooks: only set when the host actually supplied handlers.
     // createHooksBridge returns undefined for an empty config so we
     // never install an empty hooks subsystem. See hooks-bridge.ts for
@@ -641,6 +645,11 @@ export function resolvePoolAcquire(params: AttemptParamsLike): {
     workspaceDir: readString(params.workspaceDir),
     copilotHome: readString(params.copilotHome),
     auth: params.auth,
+    // Contract-resolved auth (EmbeddedRunAttemptParams): the production
+    // main path for agents with a configured `github-copilot` auth
+    // profile. Falling through to env / useLoggedInUser when absent
+    // keeps the direct-CLI / dogfood paths working unchanged.
+    resolvedApiKey: readString(params.resolvedApiKey),
     authProfileId: readString(params.authProfileId),
     profileVersion: readString(params.profileVersion),
   });

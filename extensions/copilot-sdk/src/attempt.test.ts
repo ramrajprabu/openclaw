@@ -602,23 +602,19 @@ describe("runCopilotSdkAttempt", () => {
     expect(result.feedback).toContain("no permission policy installed");
   });
 
-  it("default user-input policy returns synthetic deny-all answer", async () => {
+  it("does not register onUserInputRequest (ask_user hidden from the model in MVP)", async () => {
     const sdk = makeFakeSdk();
     const pool = makeFakePool(sdk);
 
     await runCopilotSdkAttempt(makeParams(), { pool });
 
-    const handler = (
-      sdk.createSession.mock.calls[0]?.[0] as {
-        onUserInputRequest: (
-          request: { question: string },
-          invocation: { sessionId: string },
-        ) => Promise<{ answer: string; wasFreeform: boolean }>;
-      }
-    ).onUserInputRequest;
-    const response = await handler({ question: "name?" }, { sessionId: "sess-1" });
-    expect(response.wasFreeform).toBe(true);
-    expect(response.answer).toContain("no user-input policy installed");
+    const cfg = sdk.createSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    // Per the SDK contract (types.d.ts: `When provided, enables the
+    // ask_user tool allowing the agent to ask questions`), omitting the
+    // handler hides ask_user from the model entirely. The MVP keeps it
+    // hidden; a follow-up will port the codex user-input-bridge to wire
+    // ask_user to the OpenClaw channel/TUI path.
+    expect("onUserInputRequest" in cfg).toBe(false);
   });
 
   it("enableSessionTelemetry is omitted from createSession when undefined (SDK default)", async () => {

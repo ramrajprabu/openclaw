@@ -5,27 +5,38 @@ import { join, normalize, resolve, sep } from "node:path";
 /**
  * Pure functional auth resolver for the copilot-sdk harness.
  *
- * Scope (intentionally tight, per Phase 2 auth-bridge todo and package
- * boundary):
+ * Scope:
  *
- *   - Reads explicit auth signals from the harness attempt params.
- *   - Falls back to OPENCLAW_GITHUB_TOKEN / GITHUB_TOKEN env vars when no
- *     explicit token is given; synthesises a stable, non-reversible pool
- *     fingerprint so token rotation busts the client pool cleanly.
+ *   - Consumes the resolved auth signals that core's harness contract
+ *     already carries on `EmbeddedRunAttemptParams` (=
+ *     `AgentHarnessAttemptParams`): `resolvedApiKey`, `authProfileId`,
+ *     `authProfileIdSource`. Core resolves these from the agent's
+ *     `AuthProfileStore` via `provider-usage.auth.ts:resolveProviderAuths`
+ *     before invoking the harness, so the harness does not re-perform
+ *     the lookup (and could not, due to the package boundary in
+ *     `tsconfig.package-boundary.base.json`).
+ *   - Reads optional explicit overrides from the harness attempt params
+ *     (`auth.useLoggedInUser`, `auth.gitHubToken`) for direct CLI / test
+ *     use cases.
+ *   - Falls back to OPENCLAW_GITHUB_TOKEN / GITHUB_TOKEN env vars when
+ *     no contract-resolved token is given; synthesises a stable,
+ *     non-reversible pool fingerprint so token rotation busts the
+ *     client pool cleanly.
  *   - Computes a per-agent `copilotHome` default
- *     (`<openClawHome>/.openclaw/agents/<agentId>/copilot`) that respects
- *     `OPENCLAW_HOME` for the home directory root.
+ *     (`<openClawHome>/.openclaw/agents/<agentId>/copilot`, or
+ *     `<agentDir>/copilot` when an agent directory is supplied) that
+ *     respects `OPENCLAW_HOME` for the home directory root.
  *   - Defaults to `useLoggedInUser` when no token signal is available.
  *
- * OUT OF SCOPE (explicitly): looking up tokens from `AuthProfileStore`.
- * That lookup lives in core (`src/agents/auth-profiles/` + `src/infra/
- * provider-usage.auth.ts:resolveProviderAuths`) and cannot be imported
- * from `extensions/copilot-sdk/` due to the package boundary
- * (`tsconfig.package-boundary.base.json`). The caller (the part of core
- * that constructs `AgentHarnessAttemptParams` for the copilot-sdk
- * harness) is responsible for pre-resolving any AuthProfileStore-backed
- * `github-copilot` token into `params.auth.gitHubToken` (with matching
- * `profileId` + `profileVersion`) before invoking the harness.
+ * Precedence (highest to lowest):
+ *   1. `auth.useLoggedInUser === true` (explicit user opt-in)
+ *   2. `auth.gitHubToken` (explicit override; requires
+ *      `profileId` + `profileVersion`)
+ *   3. `resolvedApiKey` + `authProfileId` from the contract (core's
+ *      AuthProfileStore-resolved token — the production main path for
+ *      a configured `github-copilot` auth profile)
+ *   4. OPENCLAW_GITHUB_TOKEN / GITHUB_TOKEN env vars
+ *   5. `useLoggedInUser` (default)
  */
 
 export const COPILOT_SDK_TOKEN_PROFILE_ERROR =
@@ -59,8 +70,27 @@ export interface ResolveCopilotAuthInput {
     profileId?: string;
     profileVersion?: string;
   };
-  /** Legacy top-level fallbacks kept for back-compat with attempt.ts. */
+  /**
+   * Contract-resolved token from core's AuthProfileStore lookup,
+   * carried on `EmbeddedRunAttemptParams.resolvedApiKey`. Used as the
+   * production main path when the agent has a configured
+   * `github-copilot` auth profile.
+   */
+  resolvedApiKey?: string;
+  /**
+   * Contract-resolved auth profile id, carried on
+   * `EmbeddedRunAttemptParams.authProfileId`. Used for pool keying so
+   * concurrent agents with distinct profiles do not share a CLI
+   * session/state.
+   */
   authProfileId?: string;
+  /**
+   * Legacy top-level `profileVersion` fallback kept for back-compat
+   * with explicit-token (`auth.gitHubToken`) callers. The
+   * contract-resolved `resolvedApiKey` path synthesises a version from
+   * the token fingerprint because `EmbeddedRunAttemptParams` does not
+   * carry a `profileVersion` field.
+   */
   profileVersion?: string;
   /** Injected for test seams. Defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
@@ -119,6 +149,27 @@ export function resolveCopilotAuth(input: ResolveCopilotAuthInput): ResolvedCopi
     };
   }
 
+  // Contract-resolved token from core's AuthProfileStore lookup. This
+  // is the production main path: a configured `github-copilot` auth
+  // profile flows into `EmbeddedRunAttemptParams.resolvedApiKey` and
+  // `authProfileId` upstream of the harness, and we consume both here
+  // so headless / cron / multi-profile runs work without env vars.
+  // We synthesise the pool-key version from the token fingerprint so
+  // rotation busts the cache cleanly (matching the env-fallback
+  // strategy). The contract does not carry a separate `profileVersion`.
+  const contractToken = readString(input.resolvedApiKey);
+  if (contractToken) {
+    const contractProfileId = readString(input.authProfileId);
+    return {
+      authMode: "gitHubToken",
+      gitHubToken: contractToken,
+      authProfileId: contractProfileId ?? "pi:resolved",
+      authProfileVersion: tokenFingerprint(contractToken),
+      copilotHome,
+      agentId,
+    };
+  }
+
   const envFallback = readEnvTokenFallback(env);
   if (envFallback) {
     return {
@@ -168,7 +219,13 @@ function resolveCopilotHome(args: {
   homeDir: () => string;
 }): string {
   if (args.explicit) return resolve(args.explicit);
-  if (args.agentDir) return resolve(args.agentDir);
+  // When the host hands us an agent directory we isolate the SDK CLI state
+  // (config.json, logs/, session-store.db, session-state/) under a dedicated
+  // "copilot" subdir so it cannot collide with OpenClaw's own files
+  // (models.json, auth-profiles.json, ...) in the same agent directory.
+  // This matches the documented layout and mirrors how the codex harness
+  // isolates `<agentDir>/codex-home/`.
+  if (args.agentDir) return resolve(join(args.agentDir, "copilot"));
 
   const openClawHome = readString(args.env.OPENCLAW_HOME);
   const rootHome = openClawHome ? resolve(openClawHome) : safeHomeDir(args.homeDir);

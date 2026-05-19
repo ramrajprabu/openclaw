@@ -64,8 +64,8 @@ function makeTool(
   } as unknown as FakeTool;
 }
 
-function getError(result: ToolResultObject): Error | undefined {
-  return (result as { error?: Error }).error;
+function getError(result: ToolResultObject): string | undefined {
+  return result.error;
 }
 
 afterEach(() => {
@@ -222,12 +222,22 @@ describe("convertOpenClawToolToSdkTool", () => {
     expect(result.parameters).toBe(parameters);
   });
 
-  it("does not set skipPermission", () => {
+  it("sets skipPermission: true so OpenClaw's wrapped-tool internal enforcement handles permission decisions (PI-parity model)", () => {
+    // Per the harness docs: every bridged OpenClaw tool comes from
+    // `createOpenClawCodingTools`, which already wraps each tool with
+    // `wrapToolWithBeforeToolCallHook` (loop detection, trusted plugin
+    // policies, before-tool-call hooks, two-phase plugin approvals via
+    // the gateway). Asking the SDK to run its own `onPermissionRequest`
+    // for kind: "custom-tool" would either short-circuit OpenClaw's
+    // richer enforcement (allow-all) or block every call (reject-all).
+    // Setting `skipPermission: true` lets the wrapped execute() run
+    // OpenClaw's hook with the right context — mirrors codex
+    // (`extensions/codex/src/app-server/dynamic-tools.ts`).
     const result = convertOpenClawToolToSdkTool(makeTool(), {}) as SdkTool & {
       skipPermission?: boolean;
     };
 
-    expect(Object.hasOwn(result, "skipPermission")).toBe(false);
+    expect(result.skipPermission).toBe(true);
   });
 
   it("marks every bridged tool as overridesBuiltInTool so OpenClaw owns names that collide with Copilot CLI built-ins (edit/read/write/bash/...)", () => {
@@ -256,7 +266,7 @@ describe("convertOpenClawToolToSdkTool", () => {
       resultType: "failure",
       textResultForLlm: "[copilot-sdk-tool-bridge] aborted before execution",
     });
-    expect(getError(result as ToolResultObject)?.message).toBe(
+    expect(getError(result as ToolResultObject)).toBe(
       "[copilot-sdk-tool-bridge] aborted before execution",
     );
   });
@@ -300,7 +310,7 @@ describe("convertOpenClawToolToSdkTool", () => {
       textResultForLlm:
         "[copilot-sdk-tool-bridge] beforeExecute failed for tool 'tool-a': permission denied",
     });
-    expect(getError(result as ToolResultObject)).toBe(error);
+    expect(getError(result as ToolResultObject)).toBe(error.message);
   });
 
   it("calls prepareArguments and passes the prepared args and toolCallId to execute", async () => {
@@ -333,7 +343,7 @@ describe("convertOpenClawToolToSdkTool", () => {
       textResultForLlm:
         "[copilot-sdk-tool-bridge] prepareArguments failed for tool 'tool-a': bad args",
     });
-    expect(getError(result as ToolResultObject)).toBe(error);
+    expect(getError(result as ToolResultObject)).toBe(error.message);
   });
 
   it("returns success with empty text when content is missing", async () => {
@@ -427,7 +437,7 @@ describe("convertOpenClawToolToSdkTool", () => {
       textResultForLlm:
         "[copilot-sdk-tool-bridge] unsupported AgentToolResult content shape: resource",
     });
-    expect(getError(result as ToolResultObject)?.message).toBe(
+    expect(getError(result as ToolResultObject)).toBe(
       "[copilot-sdk-tool-bridge] unsupported AgentToolResult content shape: resource",
     );
   });
@@ -447,7 +457,7 @@ describe("convertOpenClawToolToSdkTool", () => {
       resultType: "failure",
       textResultForLlm: "[copilot-sdk-tool-bridge] tool 'tool-a' failed: tool exploded",
     });
-    expect(getError(result as ToolResultObject)).toBe(error);
+    expect(getError(result as ToolResultObject)).toBe(error.message);
   });
 
   it("runs default tools in parallel", async () => {
@@ -541,6 +551,6 @@ describe("convertOpenClawToolToSdkTool", () => {
       resultType: "failure",
       textResultForLlm: "[copilot-sdk-tool-bridge] tool 'tool-a' failed: aborted during execute",
     });
-    expect(getError(result as ToolResultObject)?.message).toBe("aborted during execute");
+    expect(getError(result as ToolResultObject)).toBe("aborted during execute");
   });
 });

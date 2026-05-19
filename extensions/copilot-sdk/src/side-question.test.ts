@@ -268,7 +268,7 @@ describe("runCopilotSdkSideQuestion", () => {
     expect(pool.release).not.toHaveBeenCalled();
   });
 
-  it("uses reject-all permission and deny-all userInput bridges in the session config", async () => {
+  it("uses reject-all permission bridge and does not register onUserInputRequest", async () => {
     const session = makeFakeSession();
     const client = makeFakeClient(session);
     const pool = makeFakePool(client);
@@ -278,11 +278,13 @@ describe("runCopilotSdkSideQuestion", () => {
     const cfg = client.createSession.mock.calls[0]?.[0] as {
       tools: unknown[];
       onPermissionRequest: (...args: any[]) => Promise<any>;
-      onUserInputRequest: (...args: any[]) => Promise<any>;
-    };
+    } & Record<string, unknown>;
     expect(cfg.tools).toEqual([]);
     expect(typeof cfg.onPermissionRequest).toBe("function");
-    expect(typeof cfg.onUserInputRequest).toBe("function");
+    // ask_user is intentionally hidden from the model (matches the
+    // primary attempt path). See attempt.ts and
+    // docs/plugins/copilot-sdk-harness.md.
+    expect("onUserInputRequest" in cfg).toBe(false);
 
     const permDecision = await cfg.onPermissionRequest(
       {
@@ -296,12 +298,6 @@ describe("runCopilotSdkSideQuestion", () => {
     );
     // permission-bridge wraps the policy decision in {kind:"reject", feedback}
     expect(permDecision.kind).toBe("reject");
-
-    const inputAnswer = await cfg.onUserInputRequest(
-      { question: "name?" } as any,
-      { sessionId: "sdk-side-1" } as any,
-    );
-    expect(inputAnswer.wasFreeform).toBe(true);
   });
 
   it("does not pass an SDK reasoningEffort (OpenClaw ReasoningLevel is not aligned)", async () => {

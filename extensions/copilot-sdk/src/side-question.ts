@@ -13,7 +13,6 @@ import {
 } from "./attempt.js";
 import { createPermissionBridge, rejectAllPolicy } from "./permission-bridge.js";
 import type { CopilotClientPool, PooledClient } from "./runtime.js";
-import { createUserInputBridge, denyAllUserInputPolicy } from "./user-input-bridge.js";
 
 // Side-question bridge for the Copilot SDK harness.
 //
@@ -98,14 +97,14 @@ function buildSideQuestionPoolInput(params: SideQuestionParamsLike): CopilotSdkP
 function buildSideQuestionSessionConfig(
   params: SideQuestionParamsLike,
   modelId: string,
-): Pick<
-  SessionConfig,
-  "model" | "onPermissionRequest" | "onUserInputRequest" | "tools" | "workingDirectory"
-> {
-  // Defensive permission/userInput handlers: tools is [] but the SDK
-  // does not contractually rule out built-in tool calls in every
-  // future release. Fail-closed handlers ensure a side-question can
-  // never spawn an interactive prompt.
+): Pick<SessionConfig, "model" | "onPermissionRequest" | "tools" | "workingDirectory"> {
+  // Defensive permission handler: tools is [] but the SDK does not
+  // contractually rule out built-in tool calls in every future release.
+  // A fail-closed handler ensures a side-question can never spawn an
+  // interactive prompt. `onUserInputRequest` is intentionally not
+  // registered so `ask_user` is hidden from the model (matches the
+  // primary attempt path; see attempt.ts and
+  // docs/plugins/copilot-sdk-harness.md).
   //
   // Reasoning effort is intentionally NOT mapped here. OpenClaw's
   // `ReasoningLevel` enum ("off" | "on" | "stream") is not aligned
@@ -116,7 +115,6 @@ function buildSideQuestionSessionConfig(
   return {
     model: modelId,
     onPermissionRequest: createPermissionBridge(rejectAllPolicy),
-    onUserInputRequest: createUserInputBridge(denyAllUserInputPolicy),
     tools: [] as SdkTool[],
     workingDirectory: readString(params.workspaceDir) ?? readString(params.cwd),
   };

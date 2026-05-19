@@ -195,6 +195,19 @@ export function convertOpenClawToolToSdkTool(
     // names within a copilot-sdk attempt.
     overridesBuiltInTool: true,
     parameters: sourceTool.parameters as Record<string, unknown> | undefined,
+    // Bridged OpenClaw tools enforce their own permission/policy decisions
+    // inside `wrapToolWithBeforeToolCallHook` (see
+    // `src/agents/pi-tools.before-tool-call.ts` — the same hook PI itself
+    // uses, providing loop detection, trusted plugin policies,
+    // before-tool-call hooks, and two-phase plugin approvals via the
+    // gateway). Asking the SDK to fire `onPermissionRequest` for
+    // `kind: "custom-tool"` would either short-circuit OpenClaw's richer
+    // enforcement (if we allow-all) or block every call (if we
+    // reject-all) — neither matches PI parity. The in-tree codex harness
+    // takes the same approach: bridged OpenClaw tools are wrapped with
+    // `wrapToolWithBeforeToolCallHook` and the SDK gate is bypassed
+    // (see `extensions/codex/src/app-server/dynamic-tools.ts`).
+    skipPermission: true,
   };
 }
 
@@ -265,11 +278,15 @@ function createSuccessResult(textResultForLlm: string): ToolResultObject {
 }
 
 function createFailureResult(message: string, error: unknown): ToolResultObject {
+  // ToolResultObject.error is typed as `string | undefined` in the SDK contract
+  // (see `node_modules/@github/copilot-sdk/dist/types.d.ts`). Returning an
+  // Error object would produce a non-serializable JSON-RPC payload, so we
+  // surface the message string instead.
   return {
-    error: toError(error),
+    error: toError(error).message,
     resultType: "failure",
     textResultForLlm: message,
-  } as unknown as ToolResultObject;
+  };
 }
 
 function createError(message: string, cause: unknown): Error {

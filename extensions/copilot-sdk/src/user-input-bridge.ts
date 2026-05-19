@@ -1,6 +1,24 @@
 /**
  * User-input bridge for the copilot-sdk harness.
  *
+ * STATUS — MVP DORMANT: This module is intentionally NOT registered with
+ * the SDK in the current harness (see `attempt.ts` / `side-question.ts`).
+ * The SDK contract is "When `onUserInputRequest` is provided, enables the
+ * `ask_user` tool allowing the agent to ask questions" (see
+ * `node_modules/@github/copilot-sdk/dist/types.d.ts` `SessionConfig`);
+ * by omitting the handler we hide `ask_user` from the model entirely.
+ * Agents under the MVP must make best-judgment decisions from the
+ * initial prompt rather than asking clarifying questions mid-turn.
+ *
+ * FOLLOW-UP: The scaffolding below stays in tree so the follow-up that
+ * ports the codex user-input-bridge pattern
+ * (`extensions/codex/src/app-server/user-input-bridge.ts`) has a stable
+ * surface to wire — that change will route SDK `UserInputRequest`s
+ * through `params.onBlockReply` / `onPartialReply` and resolve the
+ * pending promise from the next inbound channel message, then register
+ * `createUserInputBridge(delegatingUserInputPolicy(...))` from
+ * `createSessionConfig`.
+ *
  * BACK-POINTER: The host-side channel/TUI prompt flow lives outside
  * this package boundary in `commitments/` and the channel plugins
  * (slack/discord/cli/tui). Per proposal §50, this bridge does NOT

@@ -78,21 +78,30 @@ Per-agent precedence, applied during `runCopilotSdkAttempt`:
 
 1. **Explicit `useLoggedInUser: true`** on the attempt input. Uses the Copilot
    CLI's logged-in user resolved under the agent's `copilotHome`.
-2. **`gitHubToken`** from the attempt input or resolved from an auth profile
-   on the agent's `AuthProfileStore` (`copilot-sdk:` prefix). Headless and cron
-   runs typically use this path with a token from `GITHUB_TOKEN` /
-   `OPENCLAW_GITHUB_TOKEN` env.
-3. **`profileId` + `profileVersion`** from the attempt input, which resolves
-   to an `AuthProfileStore` entry.
+2. **Explicit `gitHubToken`** on the attempt input (with `profileId` +
+   `profileVersion`). Useful for direct CLI invocations and tests where the
+   caller wants to bypass auth-profile resolution.
+3. **Contract-resolved `resolvedApiKey` + `authProfileId`** from the
+   `EmbeddedRunAttemptParams` shape. This is the **production main path**:
+   core resolves the agent's configured `github-copilot` auth profile
+   (via `src/infra/provider-usage.auth.ts:resolveProviderAuths`) before
+   invoking the harness, and the harness consumes both fields directly.
+   This makes a `github-copilot:<profile>` auth profile work end-to-end
+   for headless / cron / multi-profile setups without env vars.
+4. **`GITHUB_TOKEN` / `OPENCLAW_GITHUB_TOKEN`** env fallback for direct
+   CLI / dogfood runs where no auth profile is configured.
+5. **Default `useLoggedInUser`** when no token signal is available.
 
 Each agent gets a dedicated `copilotHome` so Copilot CLI tokens, sessions, and
 config do not leak between agents on the same machine. The default is
-`~/.openclaw/agents/<agentId>/copilot`. Override with
-`copilotHome: <path>` on the attempt input when you need a custom location
-(for example, a shared mount for migration).
+`<agentDir>/copilot` when the host hands the harness an agent directory
+(isolating SDK state from OpenClaw's `models.json` / `auth-profiles.json` in
+the same directory), or `~/.openclaw/agents/<agentId>/copilot` otherwise.
+Override with `copilotHome: <path>` on the attempt input when you need a
+custom location (for example, a shared mount for migration).
 
 `probeCopilotAuthShape` (see [Doctor and probes](#doctor-and-probes)) is the
-pure shape check that validates which of the three modes above will be used.
+pure shape check that validates which of the modes above will be used.
 It does not perform a live SDK handshake.
 
 ## Configuration surface
@@ -113,10 +122,14 @@ The harness reads its config from per-attempt input
   leave as-is.
 - `hooksConfig` — optional bridge config exposing OpenClaw
   before/after-message-write hooks to the SDK loop.
-- `permissionPolicy` — overrides for the policy bridge (defaults to OpenClaw's
-  shared `effective-tool-policy` logic, copied into `permission-bridge.ts`).
-- `userInputPolicy` — overrides for `onUserInputRequest` (defaults to OpenClaw's
-  channel / TUI prompt flow via the existing commitments runtime).
+- `permissionPolicy` — optional override for the SDK's
+  `onPermissionRequest` handler used for built-in SDK tool kinds
+  (`shell`, `write`, `read`, `url`, `mcp`, `memory`, `hook`). Defaults
+  to `rejectAllPolicy` as a safety net; in practice the SDK never
+  invokes any of those kinds because every bridged OpenClaw tool is
+  registered with `overridesBuiltInTool: true` and
+  `skipPermission: true` so 100% of tool calls flow through OpenClaw's
+  wrapped `execute()`. See [Permissions and ask_user](#permissions-and-ask_user).
 - `enableSessionTelemetry` — opt-in OpenTelemetry routing via
   `telemetry-bridge.ts`.
 
@@ -192,6 +205,55 @@ real Copilot CLI or touch the host fs.
   fallback for whatever runtimes do not have a peer surface.
 - PI session state is not migrated when an agent switches to `copilot-sdk`.
   Selection is per attempt; existing PI sessions remain valid.
+- **Interactive `ask_user` is not yet wired.** The SDK's
+  `onUserInputRequest` handler is intentionally not registered, which
+  per the SDK contract hides the `ask_user` tool from the model
+  entirely. Agents running under this harness make best-judgment
+  decisions from the initial prompt rather than asking clarifying
+  questions mid-turn. A follow-up will port the codex pattern at
+  `extensions/codex/src/app-server/user-input-bridge.ts` to route SDK
+  `UserInputRequest`s through the OpenClaw channel/TUI prompt path; the
+  dormant scaffolding in `extensions/copilot-sdk/src/user-input-bridge.ts`
+  is the surface that follow-up will wire.
+
+## Permissions and ask_user
+
+Permission enforcement for bridged OpenClaw tools happens **inside the
+tool wrapper**, not via the SDK's `onPermissionRequest` callback. The
+same `wrapToolWithBeforeToolCallHook` that PI uses
+(`src/agents/pi-tools.before-tool-call.ts`) is applied by
+`createOpenClawCodingTools` to every coding tool: loop detection,
+trusted plugin policies, before-tool-call hooks, and two-phase plugin
+approvals via the gateway (`plugin.approval.request`) all run with the
+exact same code path as native PI attempts.
+
+To let that wrapper own the decision, the SDK Tool returned by
+`convertOpenClawToolToSdkTool` is marked with:
+
+- `overridesBuiltInTool: true` — replaces the Copilot CLI's built-in
+  tool of the same name (edit, read, write, bash, …) so every tool
+  invocation routes back to OpenClaw.
+- `skipPermission: true` — tells the SDK not to fire
+  `onPermissionRequest({kind: "custom-tool"})` before invoking the tool.
+  The wrapped `execute()` performs the richer OpenClaw policy check
+  internally; an SDK-level prompt would either short-circuit OpenClaw's
+  enforcement (if we allow-all) or block every tool call (if we
+  reject-all) — neither matches PI parity.
+
+The in-tree codex harness uses the same split: bridged OpenClaw tools
+are wrapped (`extensions/codex/src/app-server/dynamic-tools.ts`) and
+the codex-app-server's *own* native approval kinds
+(`item/commandExecution/requestApproval`,
+`item/fileChange/requestApproval`,
+`item/permissions/requestApproval`) are routed through
+`plugin.approval.request`
+(`extensions/codex/src/app-server/approval-bridge.ts`). The Copilot SDK
+equivalent — fail-closed `rejectAllPolicy` for any non-`custom-tool`
+kind that ever reaches `onPermissionRequest` — is the same safety net,
+and it does not fire in practice because `overridesBuiltInTool: true`
+displaces every built-in.
+
+`ask_user` is intentionally hidden — see Limitations above.
 
 ## Related
 
