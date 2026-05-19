@@ -535,17 +535,100 @@ describe("runCopilotSdkAttempt", () => {
     await runCopilotSdkAttempt(makeParams(), { createToolBridge, pool });
 
     expect(createToolBridge).toHaveBeenCalledTimes(1);
-    expect(createToolBridge).toHaveBeenCalledWith({
-      abortSignal: undefined,
-      agentDir: "C:\\copilot-home",
-      agentId: "agent-1",
-      modelId: "gpt-4o",
-      modelProvider: "github-copilot",
-      sessionId: "session-1",
-      sessionKey: undefined,
-      workspaceDir: "C:\\workspace",
-    });
+    expect(createToolBridge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        abortSignal: undefined,
+        agentDir: "C:\\copilot-home",
+        agentId: "agent-1",
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+        sessionKey: undefined,
+        workspaceDir: "C:\\workspace",
+      }),
+    );
+    // F6: attempt params and sessionRef are threaded through so the
+    // bridge can build PI-parity tool context and wire onYield to the
+    // live SDK session once it exists. See tool-bridge.ts.
+    const bridgeCall = createToolBridge.mock.calls[0]?.[0] as {
+      attemptParams?: unknown;
+      sessionRef?: { current?: unknown };
+    };
+    expect(bridgeCall.attemptParams).toBeDefined();
+    expect(bridgeCall.sessionRef).toBeDefined();
     expect((sdk.createSession.mock.calls[0]?.[0] as { tools?: unknown[] }).tools).toBe(sdkTools);
+  });
+
+  it("F6: sessionRef is populated after createSession so the tool bridge's onYield can abort the live SDK session", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+    let capturedRef:
+      | { current: { abort?: () => unknown } | undefined }
+      | undefined;
+    const createToolBridge = vi.fn(
+      async (
+        input: { sessionRef?: { current: { abort?: () => unknown } | undefined } },
+      ) => {
+        capturedRef = input.sessionRef;
+        return { sdkTools: [], sourceTools: [] };
+      },
+    );
+
+    await runCopilotSdkAttempt(makeParams(), { createToolBridge, pool });
+
+    expect(capturedRef).toBeDefined();
+    // After createSession resolves, attempt.ts binds the live session
+    // to sessionRef.current so onYield can route to session.abort().
+    expect(capturedRef?.current).toBeDefined();
+    expect(capturedRef?.current).toBe(sdk.sessions[0]);
+  });
+
+  it("F6: sessionRef is populated after a successful resumeSession (resume path)", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+    let capturedRef:
+      | { current: { abort?: () => unknown } | undefined }
+      | undefined;
+    const createToolBridge = vi.fn(
+      async (
+        input: { sessionRef?: { current: { abort?: () => unknown } | undefined } },
+      ) => {
+        capturedRef = input.sessionRef;
+        return { sdkTools: [], sourceTools: [] };
+      },
+    );
+
+    await runCopilotSdkAttempt(
+      makeParams({
+        initialReplayState: { sdkSessionId: "resume-target" } as never,
+      }),
+      { createToolBridge, pool },
+    );
+
+    expect(sdk.resumeSession).toHaveBeenCalledTimes(1);
+    expect(capturedRef?.current).toBeDefined();
+    expect(capturedRef?.current).toBe(sdk.sessions[0]);
+  });
+
+  it("F6: attemptParams carries the full input so the bridge can derive PI-parity tool context", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+    let capturedParams: unknown;
+    const createToolBridge = vi.fn(async (input: { attemptParams?: unknown }) => {
+      capturedParams = input.attemptParams;
+      return { sdkTools: [], sourceTools: [] };
+    });
+
+    const params = makeParams({
+      senderIsOwner: true,
+      groupId: "g-9",
+      currentChannelId: "C-9",
+    } as never);
+    await runCopilotSdkAttempt(params, { createToolBridge, pool });
+
+    // The bridge receives the same params object so it can read every
+    // identity/policy/channel field the wrapped-tool layer needs.
+    expect(capturedParams).toBe(params);
   });
 
   it("tool bridge failures become prompt errors", async () => {
@@ -950,6 +1033,104 @@ describe("runCopilotSdkAttempt", () => {
     expect(key.authProfileVersion).toBe("v1");
     expect(options.gitHubToken).toBe("token");
     expect(options.useLoggedInUser).toBe(false);
+  });
+
+  describe("session-level gitHubToken (independent of client-level)", () => {
+    // The SDK contract (@github/copilot-sdk/dist/types.d.ts:1168-1178)
+    // makes `SessionConfig.gitHubToken` independent of the client-level
+    // `CopilotClientOptions.gitHubToken`. The session-level field is
+    // what drives content exclusion, model routing, and quota for that
+    // session. ResumeSessionConfig (types.d.ts:1198) also includes
+    // `gitHubToken` in its Pick, so resume must carry it too.
+
+    it("contract resolvedApiKey populates SessionConfig.gitHubToken on createSession", async () => {
+      const sdk = makeFakeSdk();
+      const pool = makeFakePool(sdk);
+
+      await runCopilotSdkAttempt(
+        makeParams({
+          auth: {} as never,
+          resolvedApiKey: "contract-token-xyz",
+          authProfileId: "github-copilot:main",
+        } as never),
+        { pool },
+      );
+
+      const cfg = sdk.createSession.mock.calls[0]?.[0] as { gitHubToken?: string };
+      expect(cfg.gitHubToken).toBe("contract-token-xyz");
+    });
+
+    it("explicit auth.gitHubToken populates SessionConfig.gitHubToken on createSession", async () => {
+      const sdk = makeFakeSdk();
+      const pool = makeFakePool(sdk);
+
+      await runCopilotSdkAttempt(
+        makeParams({
+          auth: { gitHubToken: "explicit-token", profileId: "p", profileVersion: "v1" } as never,
+        }),
+        { pool },
+      );
+
+      const cfg = sdk.createSession.mock.calls[0]?.[0] as { gitHubToken?: string };
+      expect(cfg.gitHubToken).toBe("explicit-token");
+    });
+
+    it("SessionConfig.gitHubToken is forwarded to resumeSession on a resumed session", async () => {
+      const sdk = makeFakeSdk();
+      const pool = makeFakePool(sdk);
+
+      await runCopilotSdkAttempt(
+        makeParams({
+          auth: {} as never,
+          resolvedApiKey: "contract-token-resume",
+          authProfileId: "github-copilot:main",
+          initialReplayState: { sdkSessionId: "resume-target" } as never,
+        } as never),
+        { pool },
+      );
+
+      expect(sdk.resumeSession).toHaveBeenCalledTimes(1);
+      const resumeCfg = sdk.resumeSession.mock.calls[0]?.[1] as { gitHubToken?: string };
+      expect(resumeCfg.gitHubToken).toBe("contract-token-resume");
+    });
+
+    it("SessionConfig.gitHubToken is omitted when useLoggedInUser is the resolved mode", async () => {
+      const sdk = makeFakeSdk();
+      const pool = makeFakePool(sdk);
+
+      await runCopilotSdkAttempt(
+        makeParams({ auth: { useLoggedInUser: true } as never }),
+        { pool },
+      );
+
+      const cfg = sdk.createSession.mock.calls[0]?.[0] as Record<string, unknown>;
+      // Per the SDK contract, passing both useLoggedInUser and a
+      // session-level gitHubToken would be contradictory. The
+      // logged-in identity already determines content exclusion /
+      // routing / quota, so the field must be absent (not
+      // empty-string, not undefined-as-key).
+      expect("gitHubToken" in cfg).toBe(false);
+    });
+
+    it("SessionConfig.gitHubToken is omitted when default mode is useLoggedInUser (no auth signal)", async () => {
+      const sdk = makeFakeSdk();
+      const pool = makeFakePool(sdk);
+
+      // No env tokens, no contract token, no explicit token: falls
+      // through to default useLoggedInUser mode.
+      const prevOpenclaw = process.env.OPENCLAW_GITHUB_TOKEN;
+      const prevGithub = process.env.GITHUB_TOKEN;
+      delete process.env.OPENCLAW_GITHUB_TOKEN;
+      delete process.env.GITHUB_TOKEN;
+      try {
+        await runCopilotSdkAttempt(makeParams({ auth: {} as never }), { pool });
+        const cfg = sdk.createSession.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect("gitHubToken" in cfg).toBe(false);
+      } finally {
+        if (prevOpenclaw !== undefined) process.env.OPENCLAW_GITHUB_TOKEN = prevOpenclaw;
+        if (prevGithub !== undefined) process.env.GITHUB_TOKEN = prevGithub;
+      }
+    });
   });
 
   describe("dual-write transcript mirror", () => {

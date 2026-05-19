@@ -330,4 +330,57 @@ describe("runCopilotSdkSideQuestion", () => {
     const result = await runCopilotSdkSideQuestion(makeParams(), { pool: pool as any });
     expect(result.text).toBe("hello world");
   });
+
+  describe("session-level gitHubToken (independent of client-level)", () => {
+    // Per the SDK contract (@github/copilot-sdk/dist/types.d.ts:1168-1178),
+    // SessionConfig.gitHubToken is independent of the client-level token
+    // and determines the identity used for content exclusion, model
+    // routing, and quota. The side-question session is throwaway but
+    // shares identity with the main attempt, so it must carry the same
+    // token when one is resolved.
+
+    it("contract resolvedApiKey populates SessionConfig.gitHubToken", async () => {
+      const session = makeFakeSession();
+      const client = makeFakeClient(session);
+      const pool = makeFakePool(client);
+
+      await runCopilotSdkSideQuestion(
+        makeParams({ resolvedApiKey: "btw-contract-token", authProfileId: "github-copilot:main" }),
+        { pool: pool as any },
+      );
+
+      const cfg = client.createSession.mock.calls[0]?.[0] as { gitHubToken?: string };
+      expect(cfg.gitHubToken).toBe("btw-contract-token");
+    });
+
+    it("explicit auth.gitHubToken populates SessionConfig.gitHubToken", async () => {
+      const session = makeFakeSession();
+      const client = makeFakeClient(session);
+      const pool = makeFakePool(client);
+
+      await runCopilotSdkSideQuestion(
+        makeParams({
+          auth: { gitHubToken: "explicit-btw", profileId: "p", profileVersion: "v1" },
+        }),
+        { pool: pool as any },
+      );
+
+      const cfg = client.createSession.mock.calls[0]?.[0] as { gitHubToken?: string };
+      expect(cfg.gitHubToken).toBe("explicit-btw");
+    });
+
+    it("SessionConfig.gitHubToken is omitted in useLoggedInUser mode", async () => {
+      const session = makeFakeSession();
+      const client = makeFakeClient(session);
+      const pool = makeFakePool(client);
+
+      await runCopilotSdkSideQuestion(
+        makeParams({ auth: { useLoggedInUser: true } }),
+        { pool: pool as any },
+      );
+
+      const cfg = client.createSession.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect("gitHubToken" in cfg).toBe(false);
+    });
+  });
 });

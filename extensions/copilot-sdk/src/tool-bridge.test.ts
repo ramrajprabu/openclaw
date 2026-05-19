@@ -116,16 +116,23 @@ describe("createCopilotSdkToolBridge", () => {
     });
 
     expect(createOpenClawCodingTools).toHaveBeenCalledTimes(1);
-    expect(createOpenClawCodingTools).toHaveBeenCalledWith({
-      abortSignal: controller.signal,
-      agentDir: "/agent",
-      agentId: "agent-1",
-      modelId: "gpt-4o",
-      modelProvider: "github-copilot",
-      sessionId: "session-1",
-      sessionKey: "session-key",
-      workspaceDir: "/workspace",
-    });
+    // F6: the bridge now forwards PI-parity context fields too. This
+    // test continues to assert the core flat fields plumb through; full
+    // PI-parity is asserted in dedicated tests below.
+    expect(createOpenClawCodingTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        abortSignal: controller.signal,
+        agentDir: "/agent",
+        agentId: "agent-1",
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+        // sessionKey is the sandboxSessionKey derivation; with no
+        // attemptParams the bridge falls back to input.sessionKey.
+        sessionKey: "session-key",
+        workspaceDir: "/workspace",
+      }),
+    );
   });
 
   it("returns sdkTools and sourceTools with matching lengths", async () => {
@@ -185,6 +192,326 @@ describe("createCopilotSdkToolBridge", () => {
         sessionId: "session-1",
       }),
     ).rejects.toThrow("duplicate tool names: alpha, beta");
+  });
+
+  // F6: PI-parity tool context. The bridged OpenClaw tools register
+  // with the SDK as `overridesBuiltInTool: true, skipPermission: true`,
+  // so the wrapped-tool enforcement layer
+  // (src/agents/pi-tools.before-tool-call.ts) is the single gate for
+  // permission, owner-only allowlists, loop detection, trusted-plugin
+  // policies, and two-phase plugin approvals. Missing context fields
+  // silently degrade those policy decisions. See round-3 maintainer
+  // finding F6 and docs/plugins/copilot-sdk-harness.md.
+  describe("PI-parity attempt context (F6)", () => {
+    function captureCall() {
+      const createOpenClawCodingTools = vi.fn(async () => [makeTool()]);
+      return {
+        createOpenClawCodingTools,
+        getOpts: () => createOpenClawCodingTools.mock.calls[0]?.[0] as Record<string, unknown>,
+      };
+    }
+
+    it("forwards identity, owner/policy, and channel/routing fields from attemptParams", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        attemptParams: {
+          agentAccountId: "acct-1",
+          senderId: "sender-1",
+          senderName: "Ada",
+          senderUsername: "ada",
+          senderE164: "+15551234567",
+          senderIsOwner: true,
+          ownerOnlyToolAllowlist: ["super_tool"],
+          memberRoleIds: ["role-admin"],
+          allowGatewaySubagentBinding: true,
+          spawnedBy: "parent:agent",
+          groupId: "g-1",
+          groupChannel: "#general",
+          groupSpace: "team-1",
+          currentChannelId: "C123",
+          currentThreadTs: "1700000000.000100",
+          currentMessageId: "M-1",
+          messageProvider: "slack",
+          messageTo: "U-1",
+          messageThreadId: "1700000000.000100",
+          replyToMode: "first",
+          requireExplicitMessageTarget: true,
+          disableMessageTool: false,
+          forceMessageTool: true,
+          enableHeartbeatTool: true,
+          forceHeartbeatTool: false,
+        } as never,
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+      });
+
+      const opts = getOpts();
+      expect(opts).toMatchObject({
+        agentAccountId: "acct-1",
+        senderId: "sender-1",
+        senderName: "Ada",
+        senderUsername: "ada",
+        senderE164: "+15551234567",
+        senderIsOwner: true,
+        ownerOnlyToolAllowlist: ["super_tool"],
+        memberRoleIds: ["role-admin"],
+        allowGatewaySubagentBinding: true,
+        spawnedBy: "parent:agent",
+        groupId: "g-1",
+        groupChannel: "#general",
+        groupSpace: "team-1",
+        currentChannelId: "C123",
+        currentThreadTs: "1700000000.000100",
+        currentMessageId: "M-1",
+        messageProvider: "slack",
+        messageTo: "U-1",
+        messageThreadId: "1700000000.000100",
+        replyToMode: "first",
+        requireExplicitMessageTarget: true,
+        forceMessageTool: true,
+        enableHeartbeatTool: true,
+      });
+    });
+
+    it("falls back messageProvider to attemptParams.messageChannel when messageProvider is absent (codex parity)", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        attemptParams: { messageChannel: "telegram" } as never,
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+      });
+
+      expect(getOpts().messageProvider).toBe("telegram");
+    });
+
+    it("forwards authProfileStore, runId, config, and run hooks (onToolOutcome) from attemptParams", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+      const authProfileStore = { kind: "fake-store" } as never;
+      const config = { agents: {} } as never;
+      const onToolOutcome = vi.fn();
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        attemptParams: {
+          authProfileStore,
+          runId: "run-1",
+          config,
+          onToolOutcome,
+        } as never,
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+      });
+
+      const opts = getOpts();
+      expect(opts.authProfileStore).toBe(authProfileStore);
+      expect(opts.runId).toBe("run-1");
+      expect(opts.config).toBe(config);
+      expect(opts.onToolOutcome).toBe(onToolOutcome);
+    });
+
+    it("derives sandboxSessionKey and runSessionKey from attemptParams (PI parity)", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        // Mirrors PI attempt.ts:1053-1060: when sandboxSessionKey
+        // differs from sessionKey, sessionKey is published as the
+        // sandbox key and the real run key is exposed as runSessionKey
+        // so `session_status: "current"` resolves to the live session.
+        attemptParams: {
+          sandboxSessionKey: "sandbox:agent:main",
+          sessionKey: "agent:main:main",
+        } as never,
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+      });
+
+      const opts = getOpts();
+      expect(opts.sessionKey).toBe("sandbox:agent:main");
+      expect(opts.runSessionKey).toBe("agent:main:main");
+    });
+
+    it("derives runSessionKey as undefined when sandboxSessionKey equals sessionKey", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        attemptParams: { sessionKey: "agent:main:main" } as never,
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+      });
+
+      const opts = getOpts();
+      expect(opts.sessionKey).toBe("agent:main:main");
+      expect(opts.runSessionKey).toBeUndefined();
+    });
+
+    it("falls back sessionKey to input.sessionKey when attemptParams omits it (legacy callers)", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        attemptParams: {},
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+        sessionKey: "fallback-key",
+      });
+
+      expect(getOpts().sessionKey).toBe("fallback-key");
+    });
+
+    it("computes modelApi, modelContextWindowTokens, modelCompat, and modelHasVision from attemptParams.model", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        attemptParams: {
+          model: {
+            api: "openai-responses",
+            contextWindow: 200_000,
+            input: ["text", "image"],
+            compat: { some: "shape" },
+          },
+        } as never,
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+      });
+
+      const opts = getOpts();
+      expect(opts.modelApi).toBe("openai-responses");
+      expect(opts.modelContextWindowTokens).toBe(200_000);
+      expect(opts.modelHasVision).toBe(true);
+      expect(opts.modelCompat).toEqual({ some: "shape" });
+    });
+
+    it("modelHasVision is false when model.input does not include 'image'", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        attemptParams: { model: { input: ["text"] } } as never,
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+      });
+
+      expect(getOpts().modelHasVision).toBe(false);
+    });
+
+    it("spreads execOverrides and bashElevated into the exec field (PI parity)", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+      const execOverrides = { security: "fast" } as never;
+      const bashElevated = { allowed: true } as never;
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        attemptParams: { execOverrides, bashElevated } as never,
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+      });
+
+      const exec = getOpts().exec as Record<string, unknown>;
+      expect(exec).toMatchObject({ security: "fast", elevated: { allowed: true } });
+    });
+
+    it("forwards run-trace context (trigger, jobId, memoryFlushWritePath, toolsAllow) via buildEmbeddedAttemptToolRunContext", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        attemptParams: {
+          trigger: "cron",
+          jobId: "job-1",
+          memoryFlushWritePath: ".memory/append.md",
+          toolsAllow: ["read", "edit"],
+        } as never,
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+      });
+
+      const opts = getOpts();
+      expect(opts.trigger).toBe("cron");
+      expect(opts.jobId).toBe("job-1");
+      expect(opts.memoryFlushWritePath).toBe(".memory/append.md");
+      // buildEmbeddedAttemptToolRunContext renames toolsAllow ->
+      // runtimeToolAllowlist; consumers (PI plugin tools) read the
+      // renamed key, so the bridge must surface the renamed shape too.
+      expect(opts.runtimeToolAllowlist).toEqual(["read", "edit"]);
+    });
+
+    it("onYield routes to sessionRef.current.abort() when the live session is bound", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+      const abort = vi.fn();
+      const sessionRef: { current: { abort?: () => unknown } | undefined } = {
+        current: undefined,
+      };
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+        sessionRef,
+      });
+
+      const onYield = getOpts().onYield as (msg?: string) => void;
+      // No session bound yet: onYield must no-op without throwing.
+      expect(() => onYield("nothing yet")).not.toThrow();
+      expect(abort).toHaveBeenCalledTimes(0);
+
+      // Bind the session after the fact (attempt.ts does this after
+      // createSession/resumeSession resolves) and verify subsequent
+      // yields abort it.
+      sessionRef.current = { abort };
+      onYield("now yield");
+      expect(abort).toHaveBeenCalledTimes(1);
+    });
+
+    it("requireExplicitMessageTarget defaults to isSubagentSessionKey(sessionKey) when undefined", async () => {
+      const { createOpenClawCodingTools, getOpts } = captureCall();
+
+      await createCopilotSdkToolBridge({
+        agentId: "agent-1",
+        // No requireExplicitMessageTarget; sessionKey looks like a
+        // subagent key so the default must be true. Mirrors PI
+        // attempt.ts:1097-1098.
+        attemptParams: { sessionKey: "subagent:envelope:abc" } as never,
+        createOpenClawCodingTools,
+        modelId: "gpt-4o",
+        modelProvider: "github-copilot",
+        sessionId: "session-1",
+      });
+
+      const opts = getOpts();
+      // We don't assert the exact boolean (subagent detection is owned
+      // by isSubagentSessionKey) — only that the bridge consulted the
+      // helper rather than emitting `undefined`.
+      expect(typeof opts.requireExplicitMessageTarget).toBe("boolean");
+    });
   });
 });
 

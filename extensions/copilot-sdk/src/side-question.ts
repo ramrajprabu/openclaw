@@ -39,6 +39,16 @@ type SideQuestionParamsLike = AgentHarnessSideQuestionParams & {
   copilotHome?: string;
   cwd?: string;
   profileVersion?: string;
+  /**
+   * Contract-resolved token from core's AuthProfileStore lookup
+   * (`EmbeddedRunAttemptParams.resolvedApiKey`). When the host
+   * dispatches `/btw` from an embedded run with a `github-copilot`
+   * auth profile configured, this carries the same token the main
+   * attempt is using so the throwaway side-question session shares
+   * the identity (and therefore the content-exclusion / model
+   * routing / quota that identity implies).
+   */
+  resolvedApiKey?: string;
 };
 
 interface MinimalSession {
@@ -77,11 +87,17 @@ export function extractAssistantText(
 }
 
 function buildSideQuestionPoolInput(params: SideQuestionParamsLike): CopilotSdkPoolAcquireInput {
-  // resolvePoolAcquire only inspects auth/agentId/agentDir/workspaceDir
-  // /copilotHome/cwd/authProfileId/profileVersion. Keeping the cast
-  // narrow documents that side-question shares the attempt pool key
-  // so a `/btw` call can reuse the main attempt's pooled CLI process
-  // rather than spawning a new one.
+  // resolvePoolAcquire inspects auth/agentId/agentDir/workspaceDir
+  // /copilotHome/cwd/authProfileId/profileVersion/resolvedApiKey.
+  // Keeping the cast narrow documents that side-question shares the
+  // attempt pool key so a `/btw` call can reuse the main attempt's
+  // pooled CLI process rather than spawning a new one. The
+  // `resolvedApiKey` field is forwarded so the side-question
+  // resolves the same `github-copilot` profile token the embedded
+  // run used; without it, `/btw` from a headless/cron run would
+  // silently fall back to env / useLoggedInUser, which would
+  // attempt a different identity and could fail on hosts without
+  // logged-in CLI state.
   return {
     agentId: params.agentId,
     agentDir: params.agentDir,
@@ -91,13 +107,15 @@ function buildSideQuestionPoolInput(params: SideQuestionParamsLike): CopilotSdkP
     auth: params.auth,
     authProfileId: params.authProfileId,
     profileVersion: params.profileVersion,
+    resolvedApiKey: params.resolvedApiKey,
   } as unknown as CopilotSdkPoolAcquireInput;
 }
 
 function buildSideQuestionSessionConfig(
   params: SideQuestionParamsLike,
   modelId: string,
-): Pick<SessionConfig, "model" | "onPermissionRequest" | "tools" | "workingDirectory"> {
+  resolvedAuth: ReturnType<typeof resolvePoolAcquire>["auth"],
+): Pick<SessionConfig, "gitHubToken" | "model" | "onPermissionRequest" | "tools" | "workingDirectory"> {
   // Defensive permission handler: tools is [] but the SDK does not
   // contractually rule out built-in tool calls in every future release.
   // A fail-closed handler ensures a side-question can never spawn an
@@ -117,6 +135,15 @@ function buildSideQuestionSessionConfig(
     onPermissionRequest: createPermissionBridge(rejectAllPolicy),
     tools: [] as SdkTool[],
     workingDirectory: readString(params.workspaceDir) ?? readString(params.cwd),
+    // Session-level GitHub token (see attempt.ts:createSessionConfig
+    // for the rationale). Identity is the same as the main attempt
+    // because side-questions are dispatched on behalf of the same
+    // run; carrying the token ensures content exclusion / model
+    // routing / quota are consistent between the main attempt and
+    // its `/btw` follow-ups.
+    ...(resolvedAuth.authMode === "gitHubToken" && resolvedAuth.gitHubToken
+      ? { gitHubToken: resolvedAuth.gitHubToken }
+      : {}),
   };
 }
 
@@ -151,7 +178,7 @@ export async function runCopilotSdkSideQuestion(
 
   try {
     handle = await deps.pool.acquire(poolAcquire.key, poolAcquire.options);
-    const sessionConfig = buildSideQuestionSessionConfig(input, modelRef.id);
+    const sessionConfig = buildSideQuestionSessionConfig(input, modelRef.id, poolAcquire.auth);
     session = (await handle.client.createSession(sessionConfig)) as unknown as MinimalSession;
 
     // Accumulate streaming deltas as a fallback in case the final

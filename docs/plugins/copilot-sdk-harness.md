@@ -253,6 +253,44 @@ kind that ever reaches `onPermissionRequest` — is the same safety net,
 and it does not fire in practice because `overridesBuiltInTool: true`
 displaces every built-in.
 
+For the wrapped-tool layer to make policy decisions equivalent to PI,
+the harness forwards the full PI attempt-tool context to
+`createOpenClawCodingTools` — identity (`senderIsOwner`,
+`memberRoleIds`, `ownerOnlyToolAllowlist`, …), channel/routing
+(`groupId`, `currentChannelId`, `replyToMode`, message-tool toggles),
+auth (`authProfileStore`), run identity
+(`sessionKey`/`runSessionKey` derived from `sandboxSessionKey`,
+`runId`), model context (`modelApi`, `modelContextWindowTokens`,
+`modelCompat`, `modelHasVision`), and run hooks (`onToolOutcome`,
+`onYield`). Without those fields, owner-only allowlists silently
+behave as deny-by-default, plugin-trust policies cannot resolve to the
+right scope, and `session_status: "current"` resolves to a stale
+sandbox key. The bridge builder is in
+`extensions/copilot-sdk/src/tool-bridge.ts` and mirrors the PI
+authoritative call at
+`src/agents/pi-embedded-runner/run/attempt.ts:1029-1117`. Two PI fields
+are intentionally **not** forwarded at MVP and tracked as follow-ups:
+`sandbox` (the harness does not yet route through `resolveSandboxContext`)
+and the PI tool-search/code-mode machinery
+(`toolSearchCatalogRef`, `includeCoreTools`,
+`includeToolSearchControls`, `toolSearchCatalogExecutor`,
+`toolConstructionPlan`), which has no analog at the SDK boundary.
+
+### Session-level GitHub token
+
+The Copilot SDK contract distinguishes the **client-level** GitHub
+token (`CopilotClientOptions.gitHubToken`, used to authenticate the
+CLI process itself) from the **session-level** token
+(`SessionConfig.gitHubToken`, which determines content exclusion,
+model routing, and quota for that session and is honored on both
+`createSession` and `resumeSession`). The harness resolves auth once
+via `resolveCopilotAuth` and sets both fields when the auth mode is
+`gitHubToken` (an explicit `auth.gitHubToken` or a contract-resolved
+`resolvedApiKey` from a configured `github-copilot` auth profile).
+When the resolved mode is `useLoggedInUser`, the session-level field
+is omitted so the SDK keeps deriving identity from the logged-in
+identity. The same plumbing applies to side-question sessions.
+
 `ask_user` is intentionally hidden — see Limitations above.
 
 ## Related

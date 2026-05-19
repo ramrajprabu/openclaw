@@ -1,13 +1,50 @@
 import type { Tool as SdkTool, ToolInvocation, ToolResultObject } from "@github/copilot-sdk";
-import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-harness-runtime";
+import type {
+  AnyAgentTool,
+  EmbeddedRunAttemptParams,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
+import {
+  buildEmbeddedAttemptToolRunContext,
+  isSubagentSessionKey,
+  resolveAttemptSpawnWorkspaceDir,
+  resolveModelAuthMode,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
 
 type CreateOpenClawCodingTools =
   (typeof import("openclaw/plugin-sdk/agent-harness"))["createOpenClawCodingTools"];
-type OpenClawCodingToolsOptions = Parameters<CreateOpenClawCodingTools>[0];
+type OpenClawCodingToolsOptions = NonNullable<Parameters<CreateOpenClawCodingTools>[0]>;
 
 type AgentToolResultLike = {
   content?: unknown;
 };
+
+/**
+ * Mutable holder populated by `attempt.ts` *after* `client.createSession()`
+ * (or `client.resumeSession()`) succeeds, so that the tool bridge — which is
+ * constructed *before* the SDK session exists — can route `onYield` events
+ * to the live session's `abort()` later in the run. Bridged tools cannot
+ * execute before the SDK session is up, so reading `current === undefined`
+ * inside `onYield` is a no-op by design.
+ */
+export interface CopilotSdkSessionHolder {
+  current: { abort?: () => unknown } | undefined;
+}
+
+/**
+ * Structural subset of `EmbeddedRunAttemptParams` carried into the tool
+ * bridge for PI-parity tool context (see
+ * `src/agents/pi-embedded-runner/run/attempt.ts:1029-1117` — the
+ * authoritative `createOpenClawCodingTools({...})` call shape).
+ *
+ * Declared as `Partial<EmbeddedRunAttemptParams>` (imported from the
+ * `openclaw/plugin-sdk/agent-harness-runtime` boundary, *not* from
+ * `attempt.ts` in this extension) to avoid an `attempt.ts` ↔
+ * `tool-bridge.ts` import cycle while keeping the field shapes
+ * authoritative. Production callers pass the live attempt params; test
+ * fixtures may omit this field entirely and fall back to the flat
+ * fields below for minimal-config wiring.
+ */
+export type CopilotSdkToolAttemptParams = Partial<EmbeddedRunAttemptParams>;
 
 export interface CopilotSdkToolBridgeInput {
   modelProvider: string;
@@ -18,6 +55,22 @@ export interface CopilotSdkToolBridgeInput {
   agentDir?: string;
   workspaceDir?: string;
   abortSignal?: AbortSignal;
+  /**
+   * Full PI-parity attempt parameters. When set, the bridge forwards
+   * identity, channel, owner/policy, auth-profile, message-routing,
+   * model, and run-trace fields to `createOpenClawCodingTools` so the
+   * wrapped-tool enforcement layer
+   * (`src/agents/pi-tools.before-tool-call.ts`) receives the same
+   * context the in-tree PI runner provides. See
+   * `src/agents/pi-embedded-runner/run/attempt.ts:1029-1117`.
+   */
+  attemptParams?: CopilotSdkToolAttemptParams;
+  /**
+   * Mutable session holder used to wire `onYield` to the live
+   * `session.abort()` once the SDK session is established. See
+   * {@link CopilotSdkSessionHolder}.
+   */
+  sessionRef?: CopilotSdkSessionHolder;
   createOpenClawCodingTools?: (opts: unknown) => AnyAgentTool[] | Promise<AnyAgentTool[]>;
   beforeExecute?: (ctx: {
     toolName: string;
@@ -52,16 +105,7 @@ export async function createCopilotSdkToolBridge(
     input.createOpenClawCodingTools ??
     (await import("openclaw/plugin-sdk/agent-harness")).createOpenClawCodingTools;
 
-  const toolOptions: OpenClawCodingToolsOptions = {
-    agentDir: input.agentDir,
-    agentId: input.agentId,
-    abortSignal: input.abortSignal,
-    modelId: input.modelId,
-    modelProvider: input.modelProvider,
-    sessionId: input.sessionId,
-    sessionKey: input.sessionKey,
-    workspaceDir: input.workspaceDir,
-  };
+  const toolOptions = buildOpenClawCodingToolsOptions(input);
 
   let sourceTools: unknown;
   try {
@@ -93,6 +137,152 @@ export async function createCopilotSdkToolBridge(
       }),
     ),
     sourceTools: tools,
+  };
+}
+
+/**
+ * Builds the full `createOpenClawCodingTools` options bag mirroring the
+ * PI in-tree call at `src/agents/pi-embedded-runner/run/attempt.ts:1029-1117`.
+ *
+ * Why PI parity matters: bridged OpenClaw tools register with the SDK
+ * as `overridesBuiltInTool: true, skipPermission: true` (see
+ * `convertOpenClawToolToSdkTool` below). That means the wrapped-tool
+ * enforcement layer
+ * (`src/agents/pi-tools.before-tool-call.ts → wrapToolWithBeforeToolCallHook`)
+ * is the single gate for permission, owner-only allowlists, loop
+ * detection, trusted-plugin policies, and two-phase plugin approvals.
+ * That layer reads its context from the fields forwarded here; missing
+ * fields silently degrade policy decisions. See docs/plugins/copilot-sdk-harness.md.
+ *
+ * PI-only tool-search/code-mode machinery
+ * (`toolSearchCatalogRef`, `includeCoreTools`,
+ * `includeToolSearchControls`, `toolSearchCatalogExecutor`,
+ * `toolConstructionPlan`) is intentionally NOT forwarded: those are
+ * resolved inside PI's tool-construction planner and have no analog at
+ * the SDK boundary. Sandbox is also intentionally undefined at MVP —
+ * the copilot-sdk harness does not currently route through
+ * `resolveSandboxContext`. Both gaps are documented as follow-ups.
+ */
+function buildOpenClawCodingToolsOptions(
+  input: CopilotSdkToolBridgeInput,
+): OpenClawCodingToolsOptions {
+  const a = input.attemptParams ?? ({} as CopilotSdkToolAttemptParams);
+
+  // Mirror PI's `sandboxSessionKey` derivation (attempt.ts:873-874) so
+  // wrapped tools see the same policy key PI uses. When the attempt
+  // exposes neither sandboxSessionKey nor sessionKey, fall back to the
+  // flat input.sessionKey/sessionId.
+  const sandboxSessionKey =
+    a.sandboxSessionKey?.trim() ||
+    a.sessionKey?.trim() ||
+    input.sessionKey ||
+    input.sessionId;
+
+  // When sandboxSessionKey differs from the real run session key (e.g.
+  // Telegram direct peer key vs `agent:main:main`), pass the live key
+  // so `session_status: "current"` resolves to the active run session,
+  // not the stale sandbox key. Mirrors PI attempt.ts:1057-1060.
+  const liveSessionKey = a.sessionKey ?? input.sessionKey;
+  const runSessionKey =
+    liveSessionKey && liveSessionKey !== sandboxSessionKey ? liveSessionKey : undefined;
+
+  const workspaceDir = input.workspaceDir ?? a.workspaceDir;
+  const agentDir = input.agentDir ?? a.agentDir;
+  // No sandbox at MVP (see docstring); spawn workspace falls through to
+  // the resolved workspace so subagent spawn inherits the same path
+  // PI's sandbox-aware helper would have selected. When the harness
+  // has no workspaceDir at all (degenerate test fixtures) leave it
+  // undefined rather than fabricating one.
+  const spawnWorkspaceDir = workspaceDir
+    ? resolveAttemptSpawnWorkspaceDir({
+        sandbox: undefined,
+        resolvedWorkspace: workspaceDir,
+      })
+    : undefined;
+
+  const model = a.model;
+  const modelHasVision = Array.isArray(model?.input) && model.input.includes("image");
+  const modelCompat =
+    model && typeof model === "object" && "compat" in model && model.compat &&
+    typeof model.compat === "object"
+      ? (model.compat as OpenClawCodingToolsOptions["modelCompat"])
+      : undefined;
+
+  return {
+    agentId: input.agentId,
+    ...buildEmbeddedAttemptToolRunContext({
+      trigger: a.trigger,
+      jobId: a.jobId,
+      memoryFlushWritePath: a.memoryFlushWritePath,
+      toolsAllow: a.toolsAllow,
+    }),
+    exec: {
+      ...a.execOverrides,
+      elevated: a.bashElevated,
+    },
+    // sandbox: undefined — copilot-sdk harness does not route through
+    // resolveSandboxContext at MVP. Tracked as follow-up so wrapped
+    // tools that opt in to sandbox-aware behavior remain conservative.
+    messageProvider: a.messageProvider ?? a.messageChannel,
+    agentAccountId: a.agentAccountId,
+    messageTo: a.messageTo,
+    messageThreadId: a.messageThreadId,
+    groupId: a.groupId,
+    groupChannel: a.groupChannel,
+    groupSpace: a.groupSpace,
+    memberRoleIds: a.memberRoleIds,
+    spawnedBy: a.spawnedBy,
+    senderId: a.senderId,
+    senderName: a.senderName,
+    senderUsername: a.senderUsername,
+    senderE164: a.senderE164,
+    senderIsOwner: a.senderIsOwner,
+    ownerOnlyToolAllowlist: a.ownerOnlyToolAllowlist,
+    allowGatewaySubagentBinding: a.allowGatewaySubagentBinding,
+    sessionKey: sandboxSessionKey,
+    runSessionKey,
+    sessionId: input.sessionId,
+    runId: a.runId,
+    agentDir,
+    workspaceDir,
+    spawnWorkspaceDir,
+    config: a.config,
+    abortSignal: input.abortSignal,
+    modelProvider: input.modelProvider,
+    modelId: input.modelId,
+    modelCompat,
+    modelApi: model?.api,
+    modelContextWindowTokens: model?.contextWindow,
+    modelAuthMode: resolveModelAuthMode(input.modelProvider, a.config, undefined, {
+      workspaceDir,
+    }),
+    currentChannelId: a.currentChannelId,
+    currentThreadTs: a.currentThreadTs,
+    currentMessageId: a.currentMessageId,
+    replyToMode: a.replyToMode,
+    hasRepliedRef: a.hasRepliedRef,
+    modelHasVision,
+    requireExplicitMessageTarget:
+      a.requireExplicitMessageTarget ?? isSubagentSessionKey(liveSessionKey),
+    sourceReplyDeliveryMode: a.sourceReplyDeliveryMode,
+    disableMessageTool: a.disableMessageTool,
+    forceMessageTool: a.forceMessageTool,
+    enableHeartbeatTool: a.enableHeartbeatTool,
+    forceHeartbeatTool: a.forceHeartbeatTool,
+    authProfileStore: a.authProfileStore,
+    // recordToolPrepStage intentionally omitted: copilot-sdk does not
+    // surface attempt-stage telemetry yet. Codex omits this too.
+    onToolOutcome: a.onToolOutcome,
+    onYield: (_message) => {
+      // The SDK session does not exist at bridge-construction time, so
+      // we route yield events through a mutable holder populated by
+      // attempt.ts immediately after `createSession()` /
+      // `resumeSession()` resolves. Bridged tools cannot execute before
+      // the SDK session is up, so a missing `current` is a no-op by
+      // design (e.g. early aborts handled by the abortSignal path).
+      const target = input.sessionRef?.current;
+      void target?.abort?.();
+    },
   };
 }
 

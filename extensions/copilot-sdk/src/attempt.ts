@@ -151,6 +151,14 @@ export async function runCopilotSdkAttempt(
 
   const poolAcquire = resolvePoolAcquire(input);
 
+  // Mutable session holder shared with the tool bridge so onYield
+  // (raised inside wrapped-tool execution) can route to the live SDK
+  // session's abort once it exists. The bridge is constructed before
+  // createSession/resumeSession resolves, so the holder is the only
+  // safe way to defer the binding without creating a circular dep.
+  // See tool-bridge.ts CopilotSdkSessionHolder.
+  const sessionRef: { current: SessionLike | undefined } = { current: undefined };
+
   try {
     let sdkTools: SdkTool[];
     try {
@@ -163,6 +171,13 @@ export async function runCopilotSdkAttempt(
         agentDir: readString(input.agentDir),
         workspaceDir: readString(input.workspaceDir) ?? readString(input.cwd),
         abortSignal: params.abortSignal,
+        // Forward the full attempt params so the wrapped-tool
+        // enforcement layer receives the same context PI does
+        // (identity, owner-only allowlist, auth-profile store,
+        // channel/routing, model context, run hooks). See
+        // tool-bridge.ts buildOpenClawCodingToolsOptions().
+        attemptParams: input,
+        sessionRef,
       });
       sdkTools = toolBridge.sdkTools;
     } catch (error: unknown) {
@@ -181,7 +196,7 @@ export async function runCopilotSdkAttempt(
 
     handle = await deps.pool.acquire(poolAcquire.key, poolAcquire.options);
     const client = handle.client;
-    const sessionConfig = createSessionConfig(input, modelRef.id, sdkTools);
+    const sessionConfig = createSessionConfig(input, modelRef.id, sdkTools, poolAcquire.auth);
     const replayDecision = decideReplayAction({
       sdkSessionId: input.initialReplayState?.sdkSessionId,
       replayInvalid: input.initialReplayState?.replayInvalid,
@@ -217,6 +232,9 @@ export async function runCopilotSdkAttempt(
     } else {
       session = (await client.createSession(sessionConfig)) as unknown as SessionLike;
     }
+    // Bind the session holder so the tool bridge's onYield callback
+    // can abort the live SDK session if a wrapped tool yields.
+    sessionRef.current = session;
 
     // After a recovered resume, the prior sdkSessionId no longer exists
     // server-side, so don't fall back to it: only the freshly-created
@@ -487,9 +505,11 @@ function createSessionConfig(
   params: AttemptParamsLike,
   sdkModelId: string,
   sdkTools: SdkTool[],
+  resolvedAuth: ReturnType<typeof resolveCopilotAuth>,
 ): Pick<
   SessionConfig,
   | "enableSessionTelemetry"
+  | "gitHubToken"
   | "hooks"
   | "infiniteSessions"
   | "model"
@@ -548,6 +568,21 @@ function createSessionConfig(
     reasoningEffort: params.reasoningEffort,
     tools: sdkTools,
     workingDirectory: readString(params.workspaceDir) ?? readString(params.cwd),
+    // Session-level GitHub token. INDEPENDENT of the client-level
+    // token in `CopilotClientOptions.gitHubToken` (set in
+    // `resolvePoolAcquire().options`). Per the SDK contract
+    // (`@github/copilot-sdk/dist/types.d.ts:1168-1178`), the client-
+    // level token authenticates the CLI process while the session-
+    // level token determines the identity used for content exclusion,
+    // model routing, and quota — and is sent on BOTH `createSession`
+    // and `resumeSession` (`ResumeSessionConfig` picks `gitHubToken`
+    // at types.d.ts:1198). Omitted when `useLoggedInUser` is the
+    // resolved mode — passing both would be contradictory and the SDK
+    // already implies content-exclusion/quota from the logged-in
+    // identity in that mode.
+    ...(resolvedAuth.authMode === "gitHubToken" && resolvedAuth.gitHubToken
+      ? { gitHubToken: resolvedAuth.gitHubToken }
+      : {}),
   };
 }
 
@@ -638,6 +673,21 @@ export function resolveModelRef(params: AttemptParamsLike): ModelRef {
 export function resolvePoolAcquire(params: AttemptParamsLike): {
   key: PoolKey;
   options: ClientCreateOptions;
+  /**
+   * The resolved auth result is returned so call sites that build a
+   * `SessionConfig` immediately afterwards (attempt.ts +
+   * side-question.ts) can populate `SessionConfig.gitHubToken`
+   * without re-resolving auth. `SessionConfig.gitHubToken` is
+   * INDEPENDENT of `CopilotClientOptions.gitHubToken` per the SDK
+   * contract (`@github/copilot-sdk/dist/types.d.ts:1168-1178`): the
+   * client-level token authenticates the CLI process, while the
+   * session-level token determines the identity used for content
+   * exclusion, model routing, and quota. Both `createSession` and
+   * `resumeSession` (`ResumeSessionConfig` at types.d.ts:1198) honor
+   * the session-level field, so per-session multitenancy requires
+   * setting both.
+   */
+  auth: ReturnType<typeof resolveCopilotAuth>;
 } {
   const resolved = resolveCopilotAuth({
     agentId: readString(params.agentId),
@@ -672,6 +722,7 @@ export function resolvePoolAcquire(params: AttemptParamsLike): {
       gitHubToken: resolved.authMode === "gitHubToken" ? resolved.gitHubToken : undefined,
       useLoggedInUser: resolved.authMode === "useLoggedInUser",
     },
+    auth: resolved,
   };
 }
 
