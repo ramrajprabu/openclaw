@@ -136,6 +136,14 @@ export async function runCopilotSdkAttempt(
   let releaseError: Error | undefined;
   let downgradedFromResume = false;
   let resumeFailureRecovered = false;
+  // True when a wrapped tool fired `sessions_yield`. Propagated into
+  // the final attempt result so the parent runner can mark liveness
+  // as paused and stop_reason as `end_turn`, matching the in-tree PI
+  // (`src/agents/pi-embedded-runner/run/attempt.ts:1107-1113`) and
+  // codex (`extensions/codex/src/app-server/run-attempt.ts:539,1739`)
+  // behavior. See `EmbeddedRunAttemptResult.yieldDetected` at
+  // `src/agents/pi-embedded-runner/run/types.ts:139`.
+  let yieldDetected = false;
 
   const onAbort = () => {
     abortRequested = true;
@@ -178,6 +186,9 @@ export async function runCopilotSdkAttempt(
         // tool-bridge.ts buildOpenClawCodingToolsOptions().
         attemptParams: input,
         sessionRef,
+        onYieldDetected: () => {
+          yieldDetected = true;
+        },
       });
       sdkTools = toolBridge.sdkTools;
     } catch (error: unknown) {
@@ -428,6 +439,7 @@ export async function runCopilotSdkAttempt(
     timedOut,
     toolMetas: snap ? [...snap.toolMetas] : [],
     usage: snap?.usage,
+    yieldDetected,
   });
 }
 
@@ -450,6 +462,7 @@ function createResult(
     timedOut?: boolean;
     toolMetas?: Array<{ meta?: string; toolName: string }>;
     usage?: AssistantUsageSnapshot;
+    yieldDetected?: boolean;
   },
 ): AttemptResultWithSdkSessionId {
   const promptError = state.promptError;
@@ -489,6 +502,7 @@ function createResult(
     timedOut,
     timedOutDuringCompaction: false,
     toolMetas: state.toolMetas ?? [],
+    yieldDetected: state.yieldDetected === true,
   };
 }
 

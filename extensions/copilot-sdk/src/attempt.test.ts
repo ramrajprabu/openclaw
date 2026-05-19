@@ -631,6 +631,45 @@ describe("runCopilotSdkAttempt", () => {
     expect(capturedParams).toBe(params);
   });
 
+  it("F7: result.yieldDetected is true when the tool bridge fires onYieldDetected during the attempt", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+    const createToolBridge = vi.fn(
+      async (input: { onYieldDetected?: (msg?: string) => void }) => {
+        // Simulate a wrapped tool invoking sessions_yield before the
+        // attempt settles. The bridge is responsible for notifying the
+        // caller via onYieldDetected so the final result can carry the
+        // flag (parent runner uses it to mark liveness paused /
+        // stop_reason end_turn). Mirrors PI/codex parity.
+        input.onYieldDetected?.("paused by tool");
+        return { sdkTools: [], sourceTools: [] };
+      },
+    );
+
+    const result = await runCopilotSdkAttempt(makeParams(), {
+      createToolBridge,
+      pool,
+    });
+
+    expect(result.yieldDetected).toBe(true);
+  });
+
+  it("F7: result.yieldDetected is false on a clean attempt (no sessions_yield fired)", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+    // Default createToolBridge in deps falls back to the real one,
+    // which only fires onYieldDetected when a wrapped tool yields. We
+    // pass a bridge that never yields and assert the flag stays false.
+    const createToolBridge = vi.fn(async () => ({ sdkTools: [], sourceTools: [] }));
+
+    const result = await runCopilotSdkAttempt(makeParams(), {
+      createToolBridge,
+      pool,
+    });
+
+    expect(result.yieldDetected).toBe(false);
+  });
+
   it("tool bridge failures become prompt errors", async () => {
     const sdk = makeFakeSdk();
     const pool = makeFakePool(sdk);

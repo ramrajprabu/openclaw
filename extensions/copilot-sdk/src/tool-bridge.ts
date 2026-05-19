@@ -71,6 +71,18 @@ export interface CopilotSdkToolBridgeInput {
    * {@link CopilotSdkSessionHolder}.
    */
   sessionRef?: CopilotSdkSessionHolder;
+  /**
+   * Invoked when a wrapped tool fires `sessions_yield`. The bridge
+   * always also calls `sessionRef.current?.abort?.()` to interrupt
+   * the in-flight SDK session; this callback lets the caller track
+   * the yield so the final attempt result can carry
+   * `yieldDetected: true` (the parent runner uses it to mark
+   * liveness as paused and stop_reason as `end_turn`). Mirrors
+   * the PI/codex contract — see
+   * `src/agents/pi-embedded-runner/run/attempt.ts:1107-1113` and
+   * `extensions/codex/src/app-server/run-attempt.ts:539-541`.
+   */
+  onYieldDetected?: (message?: string) => void;
   createOpenClawCodingTools?: (opts: unknown) => AnyAgentTool[] | Promise<AnyAgentTool[]>;
   beforeExecute?: (ctx: {
     toolName: string;
@@ -273,7 +285,22 @@ function buildOpenClawCodingToolsOptions(
     // recordToolPrepStage intentionally omitted: copilot-sdk does not
     // surface attempt-stage telemetry yet. Codex omits this too.
     onToolOutcome: a.onToolOutcome,
-    onYield: (_message) => {
+    onYield: (message) => {
+      // Notify the caller first so the final attempt result can carry
+      // yieldDetected even if the abort below races a concurrent
+      // settle path. Errors thrown by the caller's handler must not
+      // skip the abort, so wrap defensively. Mirrors PI (`attempt.ts`
+      // sets `yieldDetected = true; yieldMessage = message;` before
+      // calling abort) and codex (`onYieldDetected()` runs before the
+      // run-abort controller fires).
+      try {
+        input.onYieldDetected?.(message);
+      } catch (error) {
+        console.warn(
+          "[copilot-sdk-tool-bridge] onYieldDetected handler threw; continuing",
+          error,
+        );
+      }
       // The SDK session does not exist at bridge-construction time, so
       // we route yield events through a mutable holder populated by
       // attempt.ts immediately after `createSession()` /
