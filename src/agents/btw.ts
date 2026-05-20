@@ -333,6 +333,38 @@ export async function runBtwSideQuestion(
       storePath: params.storePath,
       isNewSession: params.isNewSession,
     });
+
+    // Only resolve and forward a raw API key for harnesses that
+    // explicitly consume it (currently the bundled `copilot-sdk`
+    // harness, which uses it as the SDK session-level `gitHubToken`
+    // so a headless `/btw` call runs under the same GitHub identity
+    // as the main attempt — content exclusion, model routing, and
+    // quota all depend on it). For other harnesses (including
+    // codex), do not touch credentials here: keeps the credential
+    // boundary as narrow as the existing main-attempt path. See
+    // AgentHarnessSideQuestionParams.resolvedApiKey docstring.
+    let resolvedApiKey: string | undefined;
+    if (harness.id === "copilot-sdk") {
+      try {
+        const apiKeyInfo = await getApiKeyForModel({
+          model,
+          cfg: params.cfg,
+          profileId: authProfileId,
+          agentDir: params.agentDir,
+          workspaceDir,
+        });
+        resolvedApiKey = apiKeyInfo.apiKey ?? undefined;
+      } catch {
+        // Auth resolution failure is non-fatal for the side question
+        // itself: the harness can still fall back to env /
+        // useLoggedInUser. Surfacing the error here would be more
+        // disruptive than the upstream behavior, and the harness
+        // already validates auth and emits a clear error if neither
+        // path produces a usable identity.
+        resolvedApiKey = undefined;
+      }
+    }
+
     const result = await harness.runSideQuestion({
       ...params,
       provider: model.provider,
@@ -344,6 +376,7 @@ export async function runBtwSideQuestion(
       workspaceDir,
       authProfileId,
       authProfileIdSource,
+      ...(resolvedApiKey ? { resolvedApiKey } : {}),
     });
     return { text: result.text };
   }

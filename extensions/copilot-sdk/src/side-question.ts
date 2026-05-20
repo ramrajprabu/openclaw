@@ -4,6 +4,7 @@ import type {
   AgentHarnessSideQuestionResult,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
+  isSdkSendAndWaitTimeoutError,
   readString,
   resolveModelRef,
   resolvePoolAcquire,
@@ -197,11 +198,29 @@ export async function runCopilotSdkSideQuestion(
 
     result = await session.sendAndWait({ prompt: question }, timeoutMs);
     if (result === undefined) {
+      // Defensive: keep handling the legacy `resolve(undefined)`
+      // shape in case a future SDK release changes back, even
+      // though @github/copilot-sdk@1.0.0-beta.4 rejects with the
+      // shape detected in the catch block below.
       timedOut = true;
       primaryError = new Error(`[copilot-sdk-side-question] timed out after ${timeoutMs}ms`);
     }
   } catch (err: unknown) {
-    primaryError = toError(err);
+    if (isSdkSendAndWaitTimeoutError(err)) {
+      // The SDK rejects sendAndWait with a deterministic timeout
+      // message (see isSdkSendAndWaitTimeoutError). Flip timedOut so
+      // the cleanup branch at the bottom of the finally block
+      // calls session.abort() before disconnect — for `/btw` we
+      // want the throwaway session torn down so quota isn't billed
+      // for work the caller will never read. Set primaryError to
+      // the canonical side-question timeout message so the caller
+      // sees a consistent error message regardless of whether the
+      // SDK resolved-undefined or rejected.
+      timedOut = true;
+      primaryError = new Error(`[copilot-sdk-side-question] timed out after ${timeoutMs}ms`);
+    } else {
+      primaryError = toError(err);
+    }
   } finally {
     if (unsubscribe) {
       try {

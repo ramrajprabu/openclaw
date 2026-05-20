@@ -568,6 +568,129 @@ describe("runBtwSideQuestion", () => {
     expect(registerProviderStreamForModelMock).not.toHaveBeenCalled();
   });
 
+  it("G2: forwards resolvedApiKey to the copilot-sdk harness side-question hook (production /btw auth)", async () => {
+    // The copilot-sdk harness needs the resolved auth-profile token
+    // forwarded so its throwaway side-question session runs under the
+    // same GitHub identity as the main attempt. Before round-5 the
+    // contract field did not exist and btw.ts never called
+    // getApiKeyForModel, so headless `/btw` from a github-copilot
+    // profile silently fell back to env / useLoggedInUser.
+    const copilotSdkSideQuestionMock = vi
+      .fn()
+      .mockResolvedValue({ text: "copilot-sdk side answer." });
+    registerAgentHarness({
+      id: "copilot-sdk",
+      label: "Copilot SDK test harness",
+      supports: () => ({ supported: true, priority: 100 }),
+      runAttempt: vi.fn(),
+      runSideQuestion: copilotSdkSideQuestionMock,
+    });
+    resolveModelWithRegistryMock.mockReturnValue({
+      provider: "github-copilot",
+      id: "gpt-4.1",
+      api: "copilot",
+    });
+    resolveSessionAuthProfileOverrideMock.mockResolvedValue("github-copilot:work");
+    getApiKeyForModelMock.mockResolvedValueOnce({
+      apiKey: "ghp-resolved-token-xyz",
+      mode: "github-copilot-token",
+      profileId: "github-copilot:work",
+    });
+
+    const result = await runSideQuestion({
+      provider: "github-copilot",
+      model: "gpt-4.1",
+      sessionKey: DEFAULT_SESSION_KEY,
+    });
+
+    expect(result).toEqual({ text: "copilot-sdk side answer." });
+    expect(getApiKeyForModelMock).toHaveBeenCalledTimes(1);
+    const [[getKeyArgs]] = getApiKeyForModelMock.mock.calls as unknown as Array<
+      [{ profileId?: string; model?: { provider?: string; id?: string } }]
+    >;
+    expect(getKeyArgs.profileId).toBe("github-copilot:work");
+    expect(getKeyArgs.model?.provider).toBe("github-copilot");
+    expect(copilotSdkSideQuestionMock).toHaveBeenCalledTimes(1);
+    const [[sideQuestionParams]] = copilotSdkSideQuestionMock.mock.calls as unknown as Array<
+      [
+        {
+          authProfileId?: string;
+          resolvedApiKey?: string;
+        },
+      ]
+    >;
+    expect(sideQuestionParams.authProfileId).toBe("github-copilot:work");
+    expect(sideQuestionParams.resolvedApiKey).toBe("ghp-resolved-token-xyz");
+  });
+
+  it("G2: does NOT call getApiKeyForModel or forward resolvedApiKey for non-copilot-sdk harnesses (credential boundary stays narrow)", async () => {
+    // The contract field exists on AgentHarnessSideQuestionParams but
+    // btw.ts must only populate it for harnesses that explicitly
+    // consume it. Forwarding a raw token to e.g. the codex harness
+    // would widen credential exposure without any consumer needing
+    // it. Verify the codex routing path skips the lookup entirely.
+    const codexSideQuestionMock = vi.fn().mockResolvedValue({ text: "Codex answer." });
+    registerAgentHarness({
+      id: "codex",
+      label: "Codex test harness",
+      supports: () => ({ supported: true, priority: 100 }),
+      runAttempt: vi.fn(),
+      runSideQuestion: codexSideQuestionMock,
+    });
+    resolveModelWithRegistryMock.mockReturnValue({
+      provider: "openai",
+      id: "gpt-5.5",
+      api: "openai-responses",
+    });
+    resolveSessionAuthProfileOverrideMock.mockResolvedValue("openai-codex:work");
+
+    await runSideQuestion({
+      provider: "openai",
+      model: "gpt-5.5",
+      sessionKey: DEFAULT_SESSION_KEY,
+    });
+
+    expect(getApiKeyForModelMock).not.toHaveBeenCalled();
+    const [[sideQuestionParams]] = codexSideQuestionMock.mock.calls as unknown as Array<
+      [{ resolvedApiKey?: string }]
+    >;
+    expect(sideQuestionParams.resolvedApiKey).toBeUndefined();
+  });
+
+  it("G2: copilot-sdk side question still runs (without resolvedApiKey) when getApiKeyForModel rejects", async () => {
+    // Auth resolution failure must not break `/btw`: the harness
+    // can still fall back to env / useLoggedInUser. Surfacing the
+    // error here would be more disruptive than the upstream behavior.
+    const copilotSdkSideQuestionMock = vi.fn().mockResolvedValue({ text: "fallback answer." });
+    registerAgentHarness({
+      id: "copilot-sdk",
+      label: "Copilot SDK test harness",
+      supports: () => ({ supported: true, priority: 100 }),
+      runAttempt: vi.fn(),
+      runSideQuestion: copilotSdkSideQuestionMock,
+    });
+    resolveModelWithRegistryMock.mockReturnValue({
+      provider: "github-copilot",
+      id: "gpt-4.1",
+      api: "copilot",
+    });
+    resolveSessionAuthProfileOverrideMock.mockResolvedValue("github-copilot:work");
+    getApiKeyForModelMock.mockRejectedValueOnce(new Error("auth profile lookup failed"));
+
+    const result = await runSideQuestion({
+      provider: "github-copilot",
+      model: "gpt-4.1",
+      sessionKey: DEFAULT_SESSION_KEY,
+    });
+
+    expect(result).toEqual({ text: "fallback answer." });
+    expect(copilotSdkSideQuestionMock).toHaveBeenCalledTimes(1);
+    const [[sideQuestionParams]] = copilotSdkSideQuestionMock.mock.calls as unknown as Array<
+      [{ resolvedApiKey?: string }]
+    >;
+    expect(sideQuestionParams.resolvedApiKey).toBeUndefined();
+  });
+
   it("keeps the direct provider fallback for non-Codex harnesses without side-question hooks", async () => {
     registerAgentHarness({
       id: "custom",

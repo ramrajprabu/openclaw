@@ -878,6 +878,84 @@ describe("runCopilotSdkAttempt", () => {
     expect(sdk.sessions[0]?.abort).toHaveBeenCalledTimes(0);
   });
 
+  it("G1: SDK timeout rejection (Error 'Timeout after Nms waiting for session.idle') sets timedOut, leaves promptError undefined, and does NOT abort the session", async () => {
+    // @github/copilot-sdk@1.0.0-beta.4 actually REJECTS sendAndWait
+    // with this exact message when the internal timer beats
+    // session.idle (see node_modules/@github/copilot-sdk/dist/
+    // session.js:156-164). Before round-5 we only handled the legacy
+    // resolve(undefined) shape, which meant a real timeout fell into
+    // the catch and surfaced as a generic prompt error with
+    // timedOut=false — the replay metadata then incorrectly treated
+    // the attempt as side-effect-safe.
+    const sdk = makeFakeSdk({
+      onCreateSession: (session) => {
+        session.sendAndWait.mockRejectedValueOnce(
+          new Error("Timeout after 60000ms waiting for session.idle"),
+        );
+      },
+    });
+    const pool = makeFakePool(sdk);
+
+    const result = await runCopilotSdkAttempt(makeParams(), { pool });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.promptError).toBeUndefined();
+    expect(result.aborted).toBe(false);
+    expect(result.externalAbort).toBe(false);
+    // Do NOT abort on timeout: orchestrator may resume the in-flight
+    // SDK session on the next attempt. Matches the existing
+    // resolve(undefined) test above.
+    expect(sdk.sessions[0]?.abort).toHaveBeenCalledTimes(0);
+    // Replay metadata must reflect that the timeout flipped the
+    // side-effect-risky bit (and therefore replay-unsafe). Before
+    // round-5 the SDK rejection fell through to a generic prompt
+    // error path with timedOut=false and the orchestrator's
+    // replay-shim incorrectly treated the attempt as side-effect-safe.
+    expect(result.replayMetadata?.hadPotentialSideEffects).toBe(true);
+    expect(result.replayMetadata?.replaySafe).toBe(false);
+  });
+
+  it("G1: SDK timeout flushes the in-flight delta chain before snapshot so assistant text is preserved", async () => {
+    // If the SDK delivered streaming deltas before the timer fired
+    // but the delta-chain promise had not yet resolved (slow async
+    // onAssistantDelta consumer), the snapshot used to be built
+    // without waiting for them. Round-5 awaits the delta chain inside
+    // the timeout branch so the recorded assistantTexts reflect what
+    // the model actually streamed.
+    const sendDeferred = createDeferred<SessionEventShape | undefined>();
+    const release = createDeferred<void>();
+    const onAssistantDelta = vi.fn(async (_payload: { delta: string }) => {
+      await release.promise;
+    });
+    const sdk = makeFakeSdk({
+      onCreateSession: (session) => {
+        session.sendAndWait.mockReturnValue(sendDeferred.promise);
+      },
+    });
+    const pool = makeFakePool(sdk);
+    const createToolBridge = vi.fn(async () => ({ sdkTools: [], sourceTools: [] }));
+
+    const runPromise = runCopilotSdkAttempt(makeParams({ onAssistantDelta }), {
+      createToolBridge,
+      pool,
+    });
+    await flushAsync();
+    const session = sdk.sessions[0];
+    session.emit("assistant.message_delta", { deltaContent: "partial-", messageId: "msg-1" });
+    await flushAsync();
+    // SDK timer fires before the slow delta consumer resolves.
+    sendDeferred.reject(new Error("Timeout after 60000ms waiting for session.idle"));
+    await flushAsync();
+    // Release the delta consumer so the awaitDeltaChain in the
+    // timeout branch can complete.
+    release.resolve();
+    const result = await runPromise;
+
+    expect(result.timedOut).toBe(true);
+    expect(onAssistantDelta).toHaveBeenCalledTimes(1);
+    expect(result.assistantTexts?.join("")).toContain("partial-");
+  });
+
   it("model translation: unsupported provider", async () => {
     const sdk = makeFakeSdk();
     const pool = makeFakePool(sdk);

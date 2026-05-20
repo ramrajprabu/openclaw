@@ -285,7 +285,29 @@ export async function runCopilotSdkAttempt(
     }
   } catch (error: unknown) {
     if (!aborted) {
-      promptError = toError(error);
+      if (isSdkSendAndWaitTimeoutError(error)) {
+        // The SDK's sendAndWait timeout rejects with a deterministic
+        // message but explicitly does NOT abort in-flight agent work
+        // (see isSdkSendAndWaitTimeoutError docstring and
+        // node_modules/@github/copilot-sdk/dist/session.js:156-164).
+        // Mark timedOut so createResult's computeReplayMetadata flips
+        // to side-effect-risky and the orchestrator's replay-shim can
+        // decide whether to resume or restart. Do NOT call
+        // session.abort() here: the orchestrator may resume the
+        // in-flight SDK session on the next attempt (the SDK keeps
+        // the server-side session intact across this kind of timeout).
+        timedOut = true;
+        // Flush any in-flight delta promise chain so the snapshot
+        // built below in `finally` includes the deltas the SDK already
+        // delivered before the timer fired.
+        try {
+          await bridge?.awaitDeltaChain();
+        } catch {
+          // delta-flush failure must not mask the timeout state
+        }
+      } else {
+        promptError = toError(error);
+      }
     }
   } finally {
     settled = true;
@@ -297,7 +319,10 @@ export async function runCopilotSdkAttempt(
         await session.disconnect();
       } catch (error: unknown) {
         disconnectError = toError(error);
-        if (!promptError) {
+        // A timeout is a higher-fidelity signal than a cleanup-time
+        // disconnect failure; don't let a stale disconnect error
+        // mask the timeout classification the replay-shim depends on.
+        if (!promptError && !timedOut) {
           promptError = disconnectError;
         }
       }
@@ -742,4 +767,34 @@ export function resolvePoolAcquire(params: AttemptParamsLike): {
 
 export function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+/**
+ * Detect the @github/copilot-sdk `session.sendAndWait` timeout
+ * rejection shape. The SDK's `sendAndWait` races the internal
+ * `session.idle` event against a timer; when the timer fires first
+ * it REJECTS the promise with
+ * `new Error(`Timeout after ${effectiveTimeout}ms waiting for
+ * session.idle`)` (see
+ * `node_modules/@github/copilot-sdk/dist/session.js:156-164`), and
+ * the SDK docs explicitly note the timeout "does not abort in-flight
+ * agent work". The caller is therefore responsible for setting the
+ * timed-out state and (for paths where in-flight work should be
+ * stopped) calling `session.abort()`.
+ *
+ * Keep the regex anchored and narrow so unrelated errors that happen
+ * to mention "Timeout" are NOT mis-classified. The shape is a literal
+ * template-string concatenation in the 1.0.0-beta line; a minor
+ * version bump that changes the wording will safely fall through to
+ * the generic prompt-error path.
+ */
+export function isSdkSendAndWaitTimeoutError(error: unknown): boolean {
+  if (error === null || typeof error !== "object") {
+    return false;
+  }
+  const message = (error as { message?: unknown }).message;
+  if (typeof message !== "string") {
+    return false;
+  }
+  return /^Timeout after \d+ms waiting for session\.idle$/.test(message);
 }

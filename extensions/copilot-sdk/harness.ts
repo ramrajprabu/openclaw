@@ -9,6 +9,7 @@ import type {
   AgentHarnessSideQuestionParams,
   AgentHarnessSideQuestionResult,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { resolveCopilotAuth } from "./src/auth-bridge.js";
 import { writeOpenClawCompactionMarker } from "./src/compaction-bridge.js";
 import type { CopilotClientPool, CopilotClientPoolOptions, PooledClient } from "./src/runtime.js";
 
@@ -43,6 +44,17 @@ interface TrackedSession {
 // session's bound state belongs here. Token / auth profile rotation
 // produces a new fingerprint so we don't replay a session against a
 // stale credential.
+//
+// Auth identity is derived from `resolveCopilotAuth(...)` — the same
+// function `resolvePoolAcquire` uses to build the pool key. That
+// ensures the compat key tracks the EFFECTIVE auth (which can come
+// from the legacy `auth.*` subobject, the contract-resolved
+// top-level `resolvedApiKey` + `authProfileId`, or the env-var
+// fallback) rather than any single one of those raw inputs. The
+// `authProfileVersion` field is a non-secret sha256 fingerprint of
+// the token (see `tokenFingerprint` in `src/auth-bridge.ts`), so
+// rotating the token under the same profile id still invalidates
+// the compat key without ever serializing the raw credential.
 function computeSessionCompatKey(params: AgentHarnessAttemptParams): string {
   const p = params as AgentHarnessAttemptParams & {
     auth?: {
@@ -51,16 +63,47 @@ function computeSessionCompatKey(params: AgentHarnessAttemptParams): string {
       profileVersion?: string;
       useLoggedInUser?: boolean;
     };
+    agentId?: string;
+    authProfileId?: string;
     copilotHome?: string;
     cwd?: string;
     model?: string | { api?: string; id?: string; provider?: string };
     profileVersion?: string;
+    resolvedApiKey?: string;
+    workspaceDir?: string;
   };
   const modelObj: { api?: string; id?: string; provider?: string } =
     p.model && typeof p.model === "object"
       ? p.model
       : { id: typeof p.model === "string" ? p.model : undefined };
-  const auth = p.auth ?? {};
+  // resolveCopilotAuth can throw when an explicit `auth.gitHubToken`
+  // is supplied without profileId + profileVersion (the existing
+  // pool-key safety invariant). That same error would surface
+  // immediately afterwards from `resolvePoolAcquire` inside
+  // `runCopilotSdkAttempt`, so we don't want to mask it here — but
+  // we also can't include random / time-based data in the compat key
+  // (would break the deterministic equality check). Use a stable
+  // sentinel that will never match any previously-tracked compat key.
+  let authParts: string[];
+  try {
+    const resolved = resolveCopilotAuth({
+      agentId: typeof p.agentId === "string" ? p.agentId : undefined,
+      agentDir: typeof p.agentDir === "string" ? p.agentDir : undefined,
+      workspaceDir: typeof p.workspaceDir === "string" ? p.workspaceDir : undefined,
+      copilotHome: typeof p.copilotHome === "string" ? p.copilotHome : undefined,
+      auth: p.auth,
+      resolvedApiKey: typeof p.resolvedApiKey === "string" ? p.resolvedApiKey : undefined,
+      authProfileId: typeof p.authProfileId === "string" ? p.authProfileId : undefined,
+      profileVersion: typeof p.profileVersion === "string" ? p.profileVersion : undefined,
+    });
+    authParts = [
+      `auth.mode=${resolved.authMode}`,
+      `auth.profileId=${String(resolved.authProfileId ?? "")}`,
+      `auth.profileVersion=${String(resolved.authProfileVersion ?? "")}`,
+    ];
+  } catch {
+    authParts = ["auth=unresolvable"];
+  }
   const parts = [
     `provider=${String(modelObj.provider ?? "")}`,
     `model=${String(modelObj.id ?? "")}`,
@@ -68,10 +111,7 @@ function computeSessionCompatKey(params: AgentHarnessAttemptParams): string {
     `cwd=${String(p.cwd ?? p.workspaceDir ?? "")}`,
     `agentDir=${String(p.agentDir ?? "")}`,
     `copilotHome=${String(p.copilotHome ?? "")}`,
-    `auth.profileId=${String(auth.profileId ?? "")}`,
-    `auth.profileVersion=${String(auth.profileVersion ?? p.profileVersion ?? "")}`,
-    `auth.loggedInUser=${auth.useLoggedInUser ? "1" : "0"}`,
-    `auth.hasToken=${auth.gitHubToken ? "1" : "0"}`,
+    ...authParts,
   ];
   return parts.join("|");
 }

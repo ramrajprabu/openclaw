@@ -183,6 +183,29 @@ describe("runCopilotSdkSideQuestion", () => {
     expect(pool.release).toHaveBeenCalledTimes(1);
   });
 
+  it("G1: SDK timeout REJECTION ('Timeout after Nms waiting for session.idle') aborts the session, disconnects, deletes, and surfaces the canonical side-question timeout error", async () => {
+    // @github/copilot-sdk@1.0.0-beta.4 actually rejects with this
+    // exact message when the internal idle-timer beats session.idle
+    // (see node_modules/@github/copilot-sdk/dist/session.js:156-164).
+    // Before round-5 the rejection fell into the generic catch and
+    // skipped the abort path entirely — for `/btw` that meant the
+    // throwaway server-side session continued accruing quota.
+    const session = makeFakeSession({
+      sendError: new Error("Timeout after 1500ms waiting for session.idle"),
+    });
+    const client = makeFakeClient(session);
+    const pool = makeFakePool(client);
+
+    await expect(
+      runCopilotSdkSideQuestion(makeParams(), { pool: pool as any, timeoutMs: 1_500 }),
+    ).rejects.toThrow(/timed out after 1500ms/);
+
+    expect(session.abort).toHaveBeenCalledTimes(1);
+    expect(session.disconnect).toHaveBeenCalledTimes(1);
+    expect(client.deleteSession).toHaveBeenCalledWith("sdk-side-1");
+    expect(pool.release).toHaveBeenCalledTimes(1);
+  });
+
   it("does not call abort on a normal completion", async () => {
     const session = makeFakeSession();
     const pool = makeFakePool(makeFakeClient(session));

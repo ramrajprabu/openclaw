@@ -35,6 +35,20 @@ export type AgentHarnessSideQuestionParams = {
   workspaceDir?: string;
   authProfileId?: string;
   authProfileIdSource?: "auto" | "user";
+  /**
+   * Contract-resolved API key for the configured auth profile, when
+   * the selected harness needs to forward identity to a third-party
+   * runtime (e.g. the bundled `copilot-sdk` harness, which uses this
+   * as the session-level `gitHubToken` so headless `/btw` calls run
+   * under the same GitHub identity as the main attempt — content
+   * exclusion, model routing, and quota all depend on it).
+   *
+   * Callers must only populate this for harnesses that explicitly
+   * declare they consume it; do not blanket-forward to every harness
+   * with a `runSideQuestion` hook so credential exposure stays
+   * narrow. See `src/agents/btw.ts` for the gating.
+   */
+  resolvedApiKey?: string;
 };
 export type AgentHarnessSideQuestionResult = {
   text: string;

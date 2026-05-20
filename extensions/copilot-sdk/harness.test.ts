@@ -559,7 +559,7 @@ describe("createCopilotSdkAgentHarness", () => {
       expect(secondCallParams.initialReplayState?.sdkSessionId).toBeUndefined();
     });
 
-    it("does not seed when compatibility fingerprint differs (auth rotation)", async () => {
+    it("does not seed when compatibility fingerprint differs (legacy auth.gitHubToken rotation)", async () => {
       const pool = makePoolMock();
       mocks.runCopilotSdkAttempt.mockImplementation(async (_params, deps) => {
         deps.onSessionEstablished?.({
@@ -570,16 +570,101 @@ describe("createCopilotSdkAgentHarness", () => {
       });
       const harness = createCopilotSdkAgentHarness({ pool });
 
+      // Use the explicit-token auth branch (which carries gitHubToken
+      // + profileId + profileVersion through resolveCopilotAuth and
+      // surfaces the version into authProfileVersion) so a profile
+      // version bump is a real auth rotation, not a no-op fall-through
+      // to useLoggedInUser.
       await harness.runAttempt(
         makeAttemptParams({
           runId: "t1",
-          auth: { profileId: "p1", profileVersion: "v1" },
+          auth: { gitHubToken: "tok-1", profileId: "p1", profileVersion: "v1" },
         }),
       );
       await harness.runAttempt(
         makeAttemptParams({
           runId: "t2",
-          auth: { profileId: "p1", profileVersion: "v2" },
+          auth: { gitHubToken: "tok-1", profileId: "p1", profileVersion: "v2" },
+        }),
+      );
+
+      const secondCallParams = mocks.runCopilotSdkAttempt.mock.calls[1]?.[0] as {
+        initialReplayState?: { sdkSessionId?: string };
+      };
+      expect(secondCallParams.initialReplayState?.sdkSessionId).toBeUndefined();
+    });
+
+    it("G3: does not seed when top-level authProfileId rotates (production path)", async () => {
+      // The production main path (EmbeddedRunAttemptParams) carries
+      // top-level `authProfileId` + `resolvedApiKey`, not the legacy
+      // `auth.*` sub-object. computeSessionCompatKey delegates to
+      // resolveCopilotAuth so both paths produce the same effective
+      // auth identity. Rotating the top-level profile id must
+      // invalidate session reuse.
+      const pool = makePoolMock();
+      mocks.runCopilotSdkAttempt.mockImplementation(async (_params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: "sdk-sess-p1",
+          pooledClient: { key: {} as any, client: {} as any },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt(
+        makeAttemptParams({
+          runId: "t1",
+          auth: undefined,
+          authProfileId: "p1",
+          resolvedApiKey: "tok-same",
+        }),
+      );
+      await harness.runAttempt(
+        makeAttemptParams({
+          runId: "t2",
+          auth: undefined,
+          authProfileId: "p2",
+          resolvedApiKey: "tok-same",
+        }),
+      );
+
+      const secondCallParams = mocks.runCopilotSdkAttempt.mock.calls[1]?.[0] as {
+        initialReplayState?: { sdkSessionId?: string };
+      };
+      expect(secondCallParams.initialReplayState?.sdkSessionId).toBeUndefined();
+    });
+
+    it("G3: does not seed when top-level resolvedApiKey rotates (token fingerprint changes)", async () => {
+      // Same authProfileId but the resolved token bytes change.
+      // resolveCopilotAuth synthesizes authProfileVersion via
+      // tokenFingerprint(resolvedApiKey) for the contract path, so
+      // rotating the bytes flips the fingerprint and therefore the
+      // compat key. Important for cases where an upstream auth
+      // store re-issues a token under the same profile id.
+      const pool = makePoolMock();
+      mocks.runCopilotSdkAttempt.mockImplementation(async (_params, deps) => {
+        deps.onSessionEstablished?.({
+          sdkSessionId: "sdk-sess-tok1",
+          pooledClient: { key: {} as any, client: {} as any },
+        });
+        return ATTEMPT_RESULT;
+      });
+      const harness = createCopilotSdkAgentHarness({ pool });
+
+      await harness.runAttempt(
+        makeAttemptParams({
+          runId: "t1",
+          auth: undefined,
+          authProfileId: "p1",
+          resolvedApiKey: "tok-a",
+        }),
+      );
+      await harness.runAttempt(
+        makeAttemptParams({
+          runId: "t2",
+          auth: undefined,
+          authProfileId: "p1",
+          resolvedApiKey: "tok-b",
         }),
       );
 
