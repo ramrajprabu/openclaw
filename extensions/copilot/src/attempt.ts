@@ -21,6 +21,7 @@ import {
   type SessionLike,
 } from "./event-bridge.js";
 import { createHooksBridge, type CopilotHooksConfig } from "./hooks-bridge.js";
+import { resolveCopilotWorkspaceBootstrapContext } from "./workspace-bootstrap.js";
 import {
   createPermissionBridge,
   rejectAllPolicy,
@@ -207,7 +208,25 @@ export async function runCopilotAttempt(
 
     handle = await deps.pool.acquire(poolAcquire.key, poolAcquire.options);
     const client = handle.client;
-    const sessionConfig = createSessionConfig(input, modelRef.id, sdkTools, poolAcquire.auth);
+    // Load OpenClaw workspace bootstrap files (SOUL.md, IDENTITY.md,
+    // HEARTBEAT.md, ...) before constructing the SDK SessionConfig so
+    // persona/identity/heartbeat reach the model via
+    // `SessionConfig.systemMessage` (append mode). Mirrors codex's
+    // `buildCodexWorkspaceBootstrapContext` call in run-attempt.ts.
+    // Failures here are non-fatal: workspace-bootstrap returns
+    // `instructions: undefined` and the session proceeds without the
+    // OpenClaw bootstrap block (SDK still loads AGENTS.md natively).
+    const workspaceBootstrap = await resolveCopilotWorkspaceBootstrapContext({
+      attempt: input,
+      warn: (message) => console.warn(message),
+    });
+    const sessionConfig = createSessionConfig(
+      input,
+      modelRef.id,
+      sdkTools,
+      poolAcquire.auth,
+      workspaceBootstrap.instructions,
+    );
     const replayDecision = decideReplayAction({
       sdkSessionId: input.initialReplayState?.sdkSessionId,
       replayInvalid: input.initialReplayState?.replayInvalid,
@@ -545,6 +564,7 @@ function createSessionConfig(
   sdkModelId: string,
   sdkTools: SdkTool[],
   resolvedAuth: ReturnType<typeof resolveCopilotAuth>,
+  workspaceBootstrapInstructions: string | undefined,
 ): Pick<
   SessionConfig,
   | "enableSessionTelemetry"
@@ -554,6 +574,7 @@ function createSessionConfig(
   | "model"
   | "onPermissionRequest"
   | "reasoningEffort"
+  | "systemMessage"
   | "tools"
   | "workingDirectory"
 > {
@@ -621,6 +642,27 @@ function createSessionConfig(
     // identity in that mode.
     ...(resolvedAuth.authMode === "gitHubToken" && resolvedAuth.gitHubToken
       ? { gitHubToken: resolvedAuth.gitHubToken }
+      : {}),
+    // OpenClaw workspace bootstrap (SOUL.md, IDENTITY.md, HEARTBEAT.md,
+    // USER.md, TOOLS.md, BOOTSTRAP.md, MEMORY.md) injected via the
+    // SDK's `systemMessage` field in "append" mode: SDK foundation +
+    // OpenClaw context. Append keeps every SDK guardrail (identity,
+    // safety, tool instructions) intact while ensuring the model
+    // receives persona/identity/heartbeat without needing to read the
+    // files via its read tool. AGENTS.md and .github/copilot-
+    // instructions.md are intentionally filtered by
+    // workspace-bootstrap.ts because the SDK auto-loads them from
+    // `workingDirectory` (see `@github/copilot-sdk/dist/types.d.ts`
+    // L1036). Omitted entirely when no relevant files exist so the
+    // SDK default (foundation only) applies. Mirrors codex's
+    // `developerInstructions` plumbing in run-attempt.ts L2905.
+    ...(workspaceBootstrapInstructions
+      ? {
+          systemMessage: {
+            mode: "append" as const,
+            content: workspaceBootstrapInstructions,
+          },
+        }
       : {}),
   };
 }

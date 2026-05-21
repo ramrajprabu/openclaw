@@ -3,7 +3,7 @@ import type {
   AgentHarnessAttemptParams,
   AgentHarnessAttemptResult,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCopilotAttempt } from "./attempt.js";
 import type { CopilotClientPool } from "./runtime.js";
 
@@ -23,6 +23,21 @@ const dualWriteMock = vi.hoisted(() => ({
   },
 }));
 vi.mock("./dual-write-transcripts.js", () => dualWriteMock);
+
+// Mock the workspace-bootstrap loader so attempt tests do not perform
+// real filesystem reads (which add async ticks and would break the
+// carefully-timed delta-ordering tests below). Real loader behavior is
+// covered separately in workspace-bootstrap.test.ts. The dedicated
+// "workspace bootstrap (systemMessage)" describe block below overrides
+// the mock per-test to verify wiring into SessionConfig.systemMessage.
+const workspaceBootstrapMock = vi.hoisted(() => ({
+  resolveCopilotWorkspaceBootstrapContext: vi.fn().mockResolvedValue({
+    bootstrapFiles: [],
+    contextFiles: [],
+    instructions: undefined,
+  }),
+}));
+vi.mock("./workspace-bootstrap.js", () => workspaceBootstrapMock);
 
 type SessionEventShape = {
   data: Record<string, unknown>;
@@ -65,7 +80,14 @@ function createDeferred<T>() {
 }
 
 function flushAsync() {
-  return Promise.resolve().then(() => Promise.resolve());
+  // Pump enough microtasks for the attempt to settle past every
+  // pre-createSession `await` in attempt.ts (resolvePoolAcquire,
+  // resolveCopilotWorkspaceBootstrapContext, createSession, etc.).
+  // Each chained `then` is one tick; tests rely on this to observe
+  // `sdk.sessions[0]` being populated before they emit deltas.
+  return Promise.resolve()
+    .then(() => Promise.resolve())
+    .then(() => Promise.resolve());
 }
 
 function getPromptErrorCode(result: AgentHarnessAttemptResult): string | undefined {
@@ -798,6 +820,97 @@ describe("runCopilotAttempt", () => {
 
     const cfg = sdk.createSession.mock.calls[0]?.[0] as Record<string, unknown>;
     expect("infiniteSessions" in cfg).toBe(false);
+  });
+
+  describe("workspace bootstrap (systemMessage)", () => {
+    beforeEach(() => {
+      workspaceBootstrapMock.resolveCopilotWorkspaceBootstrapContext.mockReset();
+      // Re-establish the default fast-path so unrelated tests in the
+      // suite keep getting `instructions: undefined`. Tests in this
+      // block override the mock locally to inject their own rendered
+      // instructions string.
+      workspaceBootstrapMock.resolveCopilotWorkspaceBootstrapContext.mockResolvedValue({
+        bootstrapFiles: [],
+        contextFiles: [],
+        instructions: undefined,
+      });
+    });
+
+    it("forwards rendered bootstrap instructions into SDK SessionConfig.systemMessage (append mode)", async () => {
+      const rendered =
+        "# Project Context\n## /ws/SOUL.md\n\nSoul voice goes here.\n\n## /ws/IDENTITY.md\n\nI am the agent.";
+      workspaceBootstrapMock.resolveCopilotWorkspaceBootstrapContext.mockResolvedValueOnce({
+        bootstrapFiles: [],
+        contextFiles: [],
+        instructions: rendered,
+      });
+      const sdk = makeFakeSdk();
+      const pool = makeFakePool(sdk);
+
+      await runCopilotAttempt(makeParams(), { pool });
+
+      // Regression: persona/identity bootstrap (SOUL.md, IDENTITY.md)
+      // must reach SDK SessionConfig.systemMessage so the model
+      // receives it as system context without having to read the file
+      // via its read tool. The SDK's `append` mode keeps the SDK
+      // foundation (identity/safety/tool-instruction sections) intact
+      // while layering OpenClaw context after it. See
+      // workspace-bootstrap.ts and @github/copilot-sdk types.d.ts
+      // L1052 (SystemMessageConfig).
+      const cfg = sdk.createSession.mock.calls[0]?.[0] as {
+        systemMessage?: { mode?: string; content?: string };
+      };
+      expect(cfg.systemMessage).toBeDefined();
+      expect(cfg.systemMessage?.mode).toBe("append");
+      expect(cfg.systemMessage?.content).toBe(rendered);
+    });
+
+    it("omits systemMessage entirely when the loader returns no instructions", async () => {
+      const sdk = makeFakeSdk();
+      const pool = makeFakePool(sdk);
+
+      await runCopilotAttempt(makeParams(), { pool });
+
+      const cfg = sdk.createSession.mock.calls[0]?.[0] as Record<string, unknown>;
+      // No rendered instructions => skip the systemMessage field so
+      // the SDK default (foundation only) applies. Avoids polluting
+      // session logs with an empty `append` and removes a no-op SDK
+      // codepath. Mirrors the omit-when-empty pattern used elsewhere
+      // in createSessionConfig (hooks, infiniteSessions,
+      // enableSessionTelemetry).
+      expect("systemMessage" in cfg).toBe(false);
+    });
+
+    it("forwards rendered bootstrap instructions to resumeSession on the resume path", async () => {
+      const rendered = "# Project Context\n## /ws/SOUL.md\n\nSoul voice goes here.";
+      workspaceBootstrapMock.resolveCopilotWorkspaceBootstrapContext.mockResolvedValueOnce({
+        bootstrapFiles: [],
+        contextFiles: [],
+        instructions: rendered,
+      });
+      const sdk = makeFakeSdk({
+        onResumeSession: (session) => {
+          session.sendAndWait.mockResolvedValueOnce(makeAssistantMessageEvent("resumed"));
+        },
+      });
+      const pool = makeFakePool(sdk);
+
+      await runCopilotAttempt(
+        makeParams({ initialReplayState: { sdkSessionId: "sess-resume-1" } } as never),
+        { pool },
+      );
+
+      // SystemMessage is in ResumeSessionConfig's Pick set (per SDK
+      // types.d.ts:1198), so it must be propagated on resume too,
+      // otherwise resumed sessions would silently lose OpenClaw
+      // persona/identity context after every reconnect.
+      const cfg = sdk.resumeSession.mock.calls[0]?.[1] as {
+        systemMessage?: { mode?: string; content?: string };
+      };
+      expect(cfg.systemMessage).toBeDefined();
+      expect(cfg.systemMessage?.mode).toBe("append");
+      expect(cfg.systemMessage?.content).toBe(rendered);
+    });
   });
 
   it("infiniteSessions config is propagated to createSession when host supplies it", async () => {
