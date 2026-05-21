@@ -38,7 +38,7 @@ export type AgentHarnessSideQuestionParams = {
   /**
    * Contract-resolved API key for the configured auth profile, when
    * the selected harness needs to forward identity to a third-party
-   * runtime (e.g. the bundled `github-copilot` harness, which uses this
+   * runtime (e.g. the bundled `copilot` harness, which uses this
    * as the session-level `gitHubToken` so headless `/btw` calls run
    * under the same GitHub identity as the main attempt — content
    * exclusion, model routing, and quota all depend on it).

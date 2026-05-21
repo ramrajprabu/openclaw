@@ -376,11 +376,11 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/codex/**"
-"extensions: github-copilot":
+"extensions: copilot":
   - changed-files:
       - any-glob-to-any-file:
-          - "extensions/github-copilot-agent-runtime/**"
-          - "docs/plugins/github-copilot-agent-runtime.md"
+          - "extensions/copilot/**"
+          - "docs/plugins/copilot.md"
 "extensions: kimi-coding":
   - changed-files:
       - any-glob-to-any-file:

@@ -18,7 +18,7 @@ configuration. They are different layers:
 | ------------- | ----------------------------------------------- | ------------------------------------------------------------------- |
 | Provider      | `openai`, `anthropic`, `openai-codex`, `github` | How OpenClaw authenticates, discovers models, and names model refs. |
 | Model         | `gpt-5.5`, `claude-opus-4-6`                    | The model selected for the agent turn.                              |
-| Agent runtime | `pi`, `codex`, `github-copilot`, `claude-cli`      | The low level loop or backend that executes the prepared turn.      |
+| Agent runtime | `pi`, `codex`, `copilot`, `claude-cli`      | The low level loop or backend that executes the prepared turn.      |
 | Channel       | Telegram, Discord, Slack, WhatsApp              | Where messages enter and leave OpenClaw.                            |
 
 You will also see the word **harness** in code. A harness is the implementation
@@ -33,15 +33,15 @@ There are two runtime families:
 
 - **Embedded harnesses** run inside OpenClaw's prepared agent loop. Today this
   is the built-in `pi` runtime plus registered plugin harnesses such as
-  `codex` and `github-copilot`.
+  `codex` and `copilot`.
 - **CLI backends** run a local CLI process while keeping the model ref
   canonical. For example, `anthropic/claude-opus-4-7` with
   a model-scoped `agentRuntime.id: "claude-cli"` means "select the Anthropic
   model, execute through Claude CLI." `claude-cli` is not an embedded harness id
   and must not be passed to AgentHarness selection.
 
-The `github-copilot` harness is a separate, opt-in plugin harness for the
-GitHub Copilot CLI; see [GitHub Copilot agent runtime](/plugins/github-copilot-agent-runtime)
+The `copilot` harness is a separate, opt-in plugin harness for the
+GitHub Copilot CLI; see [GitHub Copilot agent runtime](/plugins/copilot)
 for the user-facing decision between PI, Codex, and GitHub Copilot agent runtime.
 
 ## Codex surfaces
@@ -204,7 +204,7 @@ If `openclaw doctor` warns that the `codex` plugin is enabled while
 
 ## GitHub Copilot agent runtime
 
-The bundled `github-copilot` extension registers an opt-in `github-copilot` runtime
+The bundled `copilot` extension registers an opt-in `copilot` runtime
 backed by the GitHub Copilot CLI (`@github/copilot-sdk`). It claims the
 canonical subscription `github-copilot` provider and is **never** selected by
 `auto`. Opt in per-model or per-provider via `agentRuntime.id`:
@@ -216,7 +216,7 @@ canonical subscription `github-copilot` provider and is **never** selected by
       model: "github-copilot/gpt-5.5",
       models: {
         "github-copilot/gpt-5.5": {
-          agentRuntime: { id: "github-copilot" },
+          agentRuntime: { id: "copilot" },
         },
       },
     },
@@ -225,10 +225,10 @@ canonical subscription `github-copilot` provider and is **never** selected by
 ```
 
 The harness claims its provider, runtime, CLI session key, and auth profile
-prefix in `extensions/github-copilot-agent-runtime/doctor-contract-api.ts`, which
+prefix in `extensions/copilot/doctor-contract-api.ts`, which
 `openclaw doctor` auto-loads. For configuration, auth, transcript mirroring,
 compaction, the doctor probe surface, and the broader PI vs Codex vs Copilot
-SDK decision, see [GitHub Copilot agent runtime](/plugins/github-copilot-agent-runtime).
+SDK decision, see [GitHub Copilot agent runtime](/plugins/copilot).
 
 ## Compatibility contract
 
@@ -265,7 +265,7 @@ runtime policy first. Legacy session runtime pins no longer decide routing.
 
 - [Codex harness](/plugins/codex-harness)
 - [Codex harness runtime](/plugins/codex-harness-runtime)
-- [GitHub Copilot agent runtime](/plugins/github-copilot-agent-runtime)
+- [GitHub Copilot agent runtime](/plugins/copilot)
 - [OpenAI](/providers/openai)
 - [Agent harness plugins](/plugins/sdk-agent-harness)
 - [Agent loop](/concepts/agent-loop)

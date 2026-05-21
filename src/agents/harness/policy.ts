@@ -39,10 +39,10 @@ export const AGENT_HARNESS_RUNTIME_DESCRIPTORS = [
     label: "OpenAI Codex (PI runtime alias)",
   },
   {
-    id: "github-copilot",
+    id: "copilot",
     kind: "plugin-harness",
     label: "GitHub Copilot agent runtime",
-    builtinPluginId: "@openclaw/github-copilot-agent-runtime",
+    builtinPluginId: "@openclaw/copilot",
   },
 ] as const satisfies readonly AgentHarnessRuntimeDescriptor[];
 
