@@ -281,7 +281,7 @@ describe("applyMediaUnderstanding", () => {
     vi.doMock("../media/fetch.js", () => ({
       readRemoteMediaBuffer: readRemoteMediaBufferMock,
     }));
-    vi.doMock("../media/ffmpeg-exec.js", () => ({
+    vi.doMock("../media/media-services.js", () => ({
       runFfmpeg: runFfmpegMock,
     }));
     vi.doMock("../process/exec.js", () => ({
@@ -771,6 +771,37 @@ describe("applyMediaUnderstanding", () => {
     expectCliRunOptions(options);
   });
 
+  it("skips auto-detected sherpa audio when structured output has empty text", async () => {
+    clearMediaUnderstandingBinaryCacheForTests();
+    const binDir = await createTempMediaDir();
+    const modelDir = await createTempMediaDir();
+    await createMockExecutable(binDir, "sherpa-onnx-offline");
+    await fs.writeFile(path.join(modelDir, "tokens.txt"), "a");
+    await fs.writeFile(path.join(modelDir, "encoder.onnx"), "a");
+    await fs.writeFile(path.join(modelDir, "decoder.onnx"), "a");
+    await fs.writeFile(path.join(modelDir, "joiner.onnx"), "a");
+
+    const emptySherpaJson =
+      '{"lang":"","emotion":"","event":"","text":"","timestamps":[],"durations":[],"tokens":[],"ys_log_probs":[],"words":[]}';
+    const { ctx, cfg } = await setupAudioAutoDetectCase(emptySherpaJson);
+
+    await withMediaAutoDetectEnv(
+      {
+        PATH: binDir,
+        SHERPA_ONNX_MODEL_DIR: modelDir,
+      },
+      async () => {
+        const result = await applyMediaUnderstanding({ ctx, cfg });
+        expect(result.appliedAudio).toBe(false);
+      },
+    );
+
+    expect(ctx.Transcript).toBeUndefined();
+    expect(ctx.Body).toBe("<media:audio>");
+    const [command] = getRunExecCall();
+    expect(command).toBe("sherpa-onnx-offline");
+  });
+
   it("auto-detects whisper-cli when sherpa is unavailable", async () => {
     clearMediaUnderstandingBinaryCacheForTests();
     const binDir = await createTempMediaDir();
@@ -846,12 +877,21 @@ describe("applyMediaUnderstanding", () => {
 
     expect(ctx.Transcript).toBe("whisper cpp ogg ok");
     const ffmpegArgs = getRunFfmpegArgs();
-    expect(ffmpegArgs).toHaveLength(10);
+    expect(ffmpegArgs).toHaveLength(12);
     expect(ffmpegArgs.slice(0, 2)).toEqual(["-y", "-i"]);
     expect(String(ffmpegArgs[2]).endsWith("telegram-voice.ogg")).toBe(true);
-    expect(ffmpegArgs.slice(3, 9)).toEqual(["-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"]);
-    expect(String(ffmpegArgs[9])).toContain("telegram-voice.wav");
-    expect(String(ffmpegArgs[9]).endsWith(".part")).toBe(true);
+    expect(ffmpegArgs.slice(3, 11)).toEqual([
+      "-ac",
+      "1",
+      "-ar",
+      "16000",
+      "-c:a",
+      "pcm_s16le",
+      "-f",
+      "wav",
+    ]);
+    expect(String(ffmpegArgs[11])).toContain("telegram-voice.wav");
+    expect(String(ffmpegArgs[11]).endsWith(".part")).toBe(true);
 
     const [command, args, options] = getRunExecCall();
     expect(command).toBe("whisper-cli");
@@ -980,6 +1020,56 @@ describe("applyMediaUnderstanding", () => {
 
     expect(result.appliedImage).toBe(true);
     expect(ctx.Body).toBe("[Image]\nDescription:\nshared description");
+  });
+
+  it("uses media workspace for staged files and agent workspace for provider resolution", async () => {
+    const mediaWorkspaceDir = await createTempMediaDir();
+    const relativeImagePath = path.join("media", "inbound", "workspace.jpg");
+    const imagePath = path.join(mediaWorkspaceDir, relativeImagePath);
+    await fs.mkdir(path.dirname(imagePath), { recursive: true });
+    await fs.writeFile(imagePath, "image-bytes");
+    const describeImage = vi.fn(async () => ({ text: "workspace image" }));
+    const ctx: MsgContext = {
+      Body: "<media:image>",
+      MediaPath: relativeImagePath,
+      MediaType: "image/jpeg",
+      MediaWorkspaceDir: mediaWorkspaceDir,
+    };
+    const cfg: OpenClawConfig = {
+      tools: {
+        media: {
+          image: {
+            enabled: true,
+            models: [{ provider: "openai", model: "gpt-5.4" }],
+          },
+        },
+      },
+    };
+
+    const result = await applyMediaUnderstanding({
+      ctx,
+      cfg,
+      agentDir: "/tmp/openclaw-agent",
+      workspaceDir: "/tmp/openclaw-workspace",
+      providers: {
+        openai: {
+          id: "openai",
+          capabilities: ["image"],
+          describeImage,
+        },
+      },
+    });
+
+    expect(result.appliedImage).toBe(true);
+    expect(describeImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentDir: "/tmp/openclaw-agent",
+        workspaceDir: "/tmp/openclaw-workspace",
+        fileName: "workspace.jpg",
+        provider: "openai",
+        model: "gpt-5.4",
+      }),
+    );
   });
 
   it("uses active model when enabled and models are missing", async () => {

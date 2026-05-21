@@ -5,7 +5,13 @@ import { listReadOnlyChannelPluginsForConfig } from "../../channels/plugins/read
 import { buildChannelAccountSnapshot } from "../../channels/plugins/status.js";
 import type { ChannelPlugin } from "../../channels/plugins/types.plugin.js";
 import type { ChannelAccountSnapshot } from "../../channels/plugins/types.public.js";
+import {
+  normalizeRuntimeChannelAccountSnapshots,
+  resolveChannelAccountStatusRows,
+  type RuntimeChannelStatusPayload,
+} from "../../channels/status/read-model.js";
 import { callGateway } from "../../gateway/call.js";
+import { resolveMissingOfficialExternalChannelPluginRepairHint } from "../../plugins/official-external-plugin-repair-hints.js";
 import { defaultRuntime, type RuntimeEnv, writeRuntimeJson } from "../../runtime.js";
 import { formatDocsLink } from "../../terminal/links.js";
 import { theme } from "../../terminal/theme.js";
@@ -18,42 +24,13 @@ export type ChannelsListOptions = {
   all?: boolean;
 };
 
-type RuntimeChannelStatus = {
-  channelAccounts?: Record<string, unknown>;
-};
-
-function normalizeRuntimeAccounts(
-  payload: RuntimeChannelStatus | null,
-): Map<string, ChannelAccountSnapshot[]> {
-  const out = new Map<string, ChannelAccountSnapshot[]>();
-  const rawAccounts = payload?.channelAccounts;
-  if (!rawAccounts || typeof rawAccounts !== "object") {
-    return out;
-  }
-  for (const [channelId, accounts] of Object.entries(rawAccounts)) {
-    if (!Array.isArray(accounts)) {
-      continue;
-    }
-    const normalized = accounts.filter(
-      (account): account is ChannelAccountSnapshot =>
-        Boolean(account) &&
-        typeof account === "object" &&
-        typeof (account as { accountId?: unknown }).accountId === "string",
-    );
-    if (normalized.length > 0) {
-      out.set(channelId, normalized);
-    }
-  }
-  return out;
-}
-
-async function readGatewayChannelStatus(): Promise<RuntimeChannelStatus | null> {
+async function readGatewayChannelStatus(): Promise<RuntimeChannelStatusPayload | null> {
   try {
     return (await callGateway({
       method: "channels.status",
       params: { probe: false, timeoutMs: 5_000 },
       timeoutMs: 5_000,
-    })) as RuntimeChannelStatus;
+    })) as RuntimeChannelStatusPayload;
   } catch {
     return null;
   }
@@ -148,14 +125,19 @@ function formatAccountLine(params: {
 function formatCatalogOnlyLine(params: {
   entry: ChannelPluginCatalogEntry;
   installed: boolean;
+  configured: boolean;
+  repairHint?: string;
 }): string {
-  const { entry, installed } = params;
+  const { entry, installed, configured, repairHint } = params;
   const channelText = theme.accent(entry.meta.label ?? entry.id);
   const bits: string[] = [
     formatInstalled(installed),
-    formatConfigured(false),
+    formatConfigured(configured),
     formatEnabled(false),
   ];
+  if (repairHint) {
+    bits.push(repairHint);
+  }
   return `- ${channelText}: ${bits.join(", ")}`;
 }
 
@@ -180,7 +162,7 @@ export async function channelsListCommand(
   const runtimeAccountsByChannel =
     opts.json === true
       ? new Map<string, ChannelAccountSnapshot[]>()
-      : normalizeRuntimeAccounts(await readGatewayChannelStatus());
+      : normalizeRuntimeChannelAccountSnapshots(await readGatewayChannelStatus());
   const installedByChannelId = new Map<string, boolean>();
   for (const entry of catalogEntries) {
     installedByChannelId.set(
@@ -211,16 +193,16 @@ export async function channelsListCommand(
     if (accountIds && accountIds.length > 0) {
       renderedChannelIds.add(plugin.id);
       const runtimeAccounts = runtimeAccountsByChannel.get(plugin.id) ?? [];
-      const mergedAccountIds = [
-        ...new Set([...accountIds, ...runtimeAccounts.map((account) => account.accountId)]),
-      ];
-      for (const accountId of mergedAccountIds) {
-        const runtimeSnapshot = runtimeAccounts.find((account) => account.accountId === accountId);
-        const snapshot =
-          runtimeSnapshot ?? (await buildChannelAccountSnapshot({ plugin, cfg, accountId }));
+      const rows = await resolveChannelAccountStatusRows({
+        localAccountIds: accountIds,
+        runtimeAccounts,
+        resolveLocalSnapshot: (accountId) =>
+          buildChannelAccountSnapshot({ plugin, cfg, accountId }),
+      });
+      for (const row of rows) {
         accountLines.push({
           plugin,
-          snapshot,
+          snapshot: row.snapshot,
           installed: isInstalled(plugin.id),
         });
       }
@@ -253,8 +235,8 @@ export async function channelsListCommand(
     });
   }
 
-  // --all also surfaces catalog entries that are not already represented
-  // by a plugin row above. Two shapes land here:
+  // Catalog entries that are not already represented by a plugin row above can
+  // still be useful in two shapes:
   //   1. Catalog plugin package is not yet installed on disk — rendered as
   //      `not installed, not configured, disabled` so the channel still
   //      appears in the listing as installable.
@@ -264,9 +246,25 @@ export async function channelsListCommand(
   //      configured channels). These would otherwise silently disappear
   //      from the listing — render them as `installed, not configured,
   //      disabled` so operators can tell the plugin is ready to configure.
-  const catalogOnlyLines: ChannelPluginCatalogEntry[] = showAll
-    ? catalogEntries.filter((entry) => !renderedChannelIds.has(entry.id))
-    : [];
+  // Without --all, keep this limited to configured channels whose official
+  // external plugin owner is missing, otherwise `channels list` can claim
+  // there are no configured channels even though openclaw.json has one.
+  const catalogOnlyLines = catalogEntries
+    .filter((entry) => !renderedChannelIds.has(entry.id))
+    .map((entry) => {
+      const hint = resolveMissingOfficialExternalChannelPluginRepairHint({
+        config: cfg,
+        channelId: entry.id,
+        ...(workspaceDir ? { workspaceDir } : {}),
+      });
+      return {
+        entry,
+        installed: isInstalled(entry.id),
+        configured: Boolean(hint),
+        repairHint: hint ? `run ${hint.installCommand} or ${hint.doctorFixCommand}` : undefined,
+      };
+    })
+    .filter((line) => showAll || line.configured);
 
   if (opts.json) {
     type JsonChannelEntry = {
@@ -292,15 +290,12 @@ export async function channelsListCommand(
         };
       }
     }
-    if (showAll) {
-      for (const entry of catalogOnlyLines) {
-        const installed = isInstalled(entry.id);
-        chat[entry.id] = {
-          accounts: [],
-          installed,
-          origin: installed ? "available" : "installable",
-        };
-      }
+    for (const line of catalogOnlyLines) {
+      chat[line.entry.id] = {
+        accounts: [],
+        installed: line.installed,
+        origin: line.configured ? "configured" : line.installed ? "available" : "installable",
+      };
     }
     writeRuntimeJson(runtime, { chat });
     return;
@@ -326,11 +321,13 @@ export async function channelsListCommand(
         }),
       );
     }
-    for (const entry of catalogOnlyLines) {
+    for (const line of catalogOnlyLines) {
       lines.push(
         formatCatalogOnlyLine({
-          entry,
-          installed: isInstalled(entry.id),
+          entry: line.entry,
+          installed: line.installed,
+          configured: line.configured,
+          ...(line.repairHint ? { repairHint: line.repairHint } : {}),
         }),
       );
     }

@@ -43,7 +43,6 @@ import {
   resolveGatewayRequestContext,
   resolveOpenAiCompatModelOverride,
   resolveOpenAiCompatibleHttpOperatorScopes,
-  resolveOpenAiCompatibleHttpSenderIsOwner,
 } from "./http-utils.js";
 import { normalizeInputHostnameAllowlist } from "./input-allowlist.js";
 import { resolveOpenAiCompatError, validateOpenAiSamplingParams } from "./openai-compat-errors.js";
@@ -78,6 +77,7 @@ type OpenAiChatCompletionRequest = {
   max_completion_tokens?: unknown;
   temperature?: unknown;
   top_p?: unknown;
+  response_format?: unknown;
 };
 
 const DEFAULT_OPENAI_CHAT_COMPLETIONS_BODY_BYTES = 20 * 1024 * 1024;
@@ -135,9 +135,13 @@ function buildAgentCommandInput(params: {
   sessionKey: string;
   runId: string;
   messageChannel: string;
-  senderIsOwner: boolean;
   abortSignal?: AbortSignal;
-  streamParams?: { maxTokens?: number; temperature?: number; topP?: number };
+  streamParams?: {
+    maxTokens?: number;
+    temperature?: number;
+    topP?: number;
+    responseFormat?: Record<string, unknown>;
+  };
 }) {
   return {
     message: params.prompt.message,
@@ -150,7 +154,6 @@ function buildAgentCommandInput(params: {
     deliver: false as const,
     messageChannel: params.messageChannel,
     bestEffortDeliver: false as const,
-    senderIsOwner: params.senderIsOwner,
     allowModelOverride: true as const,
     abortSignal: params.abortSignal,
     streamParams: params.streamParams,
@@ -577,11 +580,12 @@ async function resolveImagesForRequest(
   return images;
 }
 
-export const __testOnlyOpenAiHttp = {
+export const testOnlyOpenAiHttp = {
   resolveImagesForRequest,
   resolveOpenAiChatCompletionsLimits,
   resolveChatCompletionUsage,
 };
+export { testOnlyOpenAiHttp as __testOnlyOpenAiHttp };
 
 function buildAgentPrompt(
   messagesUnknown: unknown,
@@ -777,6 +781,21 @@ function resolveIncludeUsageForStreaming(payload: OpenAiChatCompletionRequest): 
   return (streamOptions as { include_usage?: unknown }).include_usage === true;
 }
 
+function resolveResponseFormat(value: unknown): Record<string, unknown> | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("response_format must be an object");
+  }
+  const obj = value as Record<string, unknown>;
+  const type = obj.type;
+  if (type !== "text" && type !== "json_object" && type !== "json_schema") {
+    throw new Error("response_format.type must be text, json_object, or json_schema");
+  }
+  return obj;
+}
+
 function resolveErrorMessage(err: unknown): string {
   if (err instanceof Error) {
     const message = err.message.trim();
@@ -811,10 +830,6 @@ export async function handleOpenAiHttpRequest(
   if (!handled) {
     return true;
   }
-  // On the compat surface, shared-secret bearer auth is also treated as an
-  // owner sender so owner-only tool policy matches the documented contract.
-  const senderIsOwner = resolveOpenAiCompatibleHttpSenderIsOwner(req, handled.requestAuth);
-
   const payload = coerceRequest(handled.body);
   const stream = Boolean(payload.stream);
   const streamIncludeUsage = stream && resolveIncludeUsageForStreaming(payload);
@@ -828,6 +843,18 @@ export async function handleOpenAiHttpRequest(
         : undefined;
   const temperature = typeof payload.temperature === "number" ? payload.temperature : undefined;
   const topP = typeof payload.top_p === "number" ? payload.top_p : undefined;
+  let responseFormat: Record<string, unknown> | undefined;
+  try {
+    responseFormat = resolveResponseFormat(payload.response_format);
+  } catch (err) {
+    sendJson(res, 400, {
+      error: {
+        message: `Invalid response_format: ${resolveErrorMessage(err)}`,
+        type: "invalid_request_error",
+      },
+    });
+    return true;
+  }
   const samplingError = validateOpenAiSamplingParams({
     temperature: payload.temperature,
     topP: payload.top_p,
@@ -839,11 +866,15 @@ export async function handleOpenAiHttpRequest(
     return true;
   }
   const streamParams =
-    maxTokens !== undefined || temperature !== undefined || topP !== undefined
+    maxTokens !== undefined ||
+    temperature !== undefined ||
+    topP !== undefined ||
+    responseFormat !== undefined
       ? {
           ...(maxTokens !== undefined ? { maxTokens } : {}),
           ...(temperature !== undefined ? { temperature } : {}),
           ...(topP !== undefined ? { topP } : {}),
+          ...(responseFormat !== undefined ? { responseFormat } : {}),
         }
       : undefined;
 
@@ -929,7 +960,6 @@ export async function handleOpenAiHttpRequest(
     runId,
     messageChannel,
     abortSignal: abortController.signal,
-    senderIsOwner,
     streamParams,
   });
 
