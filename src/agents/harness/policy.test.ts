@@ -24,21 +24,21 @@ function providerRuntimeConfig(provider: string, runtime: string): OpenClawConfi
 }
 
 describe("agent harness runtime policy", () => {
-  it("exports known harness runtime ids including copilot-sdk", () => {
-    expect(KNOWN_AGENT_HARNESS_RUNTIME_IDS).toEqual(["pi", "auto", "codex", "copilot-sdk"]);
-    expect(isKnownAgentHarnessRuntimeId("copilot-sdk")).toBe(true);
+  it("exports known harness runtime ids including github-copilot", () => {
+    expect(KNOWN_AGENT_HARNESS_RUNTIME_IDS).toEqual(["pi", "auto", "codex", "github-copilot"]);
+    expect(isKnownAgentHarnessRuntimeId("github-copilot")).toBe(true);
     expect(isKnownAgentHarnessRuntimeId("custom-harness")).toBe(false);
   });
 
-  it("passes through explicit copilot-sdk runtime policy", () => {
+  it("passes through explicit github-copilot runtime policy", () => {
     expect(
       resolveAgentHarnessPolicy({
         provider: "anthropic",
         modelId: "claude-sonnet-4.6",
-        config: providerRuntimeConfig("anthropic", "copilot-sdk"),
+        config: providerRuntimeConfig("anthropic", "github-copilot"),
       }),
     ).toEqual({
-      runtime: "copilot-sdk",
+      runtime: "github-copilot",
       runtimeSource: "provider",
     });
   });
@@ -68,10 +68,10 @@ describe("agent harness runtime policy", () => {
       resolveAgentHarnessPolicy({
         provider: "openai",
         modelId: "gpt-5.4",
-        config: providerRuntimeConfig("openai", "copilot-sdk"),
+        config: providerRuntimeConfig("openai", "github-copilot"),
       }),
     ).toEqual({
-      runtime: "copilot-sdk",
+      runtime: "github-copilot",
       runtimeSource: "provider",
     });
   });
@@ -84,12 +84,12 @@ describe("agent harness runtime policy", () => {
     expect(pi?.builtinPluginId).toBeUndefined();
   });
 
-  it("describes copilot-sdk as a plugin harness with a builtin plugin id", () => {
-    const copilotSdk = getAgentHarnessRuntimeDescriptor("copilot-sdk");
-    expect(copilotSdk).toBeDefined();
-    expect(copilotSdk?.kind).toBe("plugin-harness");
-    expect(copilotSdk?.label).toBe("GitHub Copilot SDK");
-    expect(copilotSdk?.builtinPluginId).toBe("@openclaw/copilot-sdk");
+  it("describes github-copilot as a plugin harness with a builtin plugin id", () => {
+    const githubCopilot = getAgentHarnessRuntimeDescriptor("github-copilot");
+    expect(githubCopilot).toBeDefined();
+    expect(githubCopilot?.kind).toBe("plugin-harness");
+    expect(githubCopilot?.label).toBe("GitHub Copilot agent runtime");
+    expect(githubCopilot?.builtinPluginId).toBe("@openclaw/github-copilot-agent-runtime");
   });
 
   it("classifies auto as a fallback and codex as an internal runtime alias", () => {

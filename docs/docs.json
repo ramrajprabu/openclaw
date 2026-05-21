@@ -1198,7 +1198,7 @@
                 "group": "Bundled plugin guides",
                 "pages": [
                   "plugins/codex-harness",
-                  "plugins/copilot-sdk-harness",
+                  "plugins/github-copilot-harness",
                   "plugins/codex-computer-use",
                   "plugins/google-meet",
                   "plugins/webhooks",

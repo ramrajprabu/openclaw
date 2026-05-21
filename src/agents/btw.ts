@@ -335,7 +335,7 @@ export async function runBtwSideQuestion(
     });
 
     // Only resolve and forward a raw API key for harnesses that
-    // explicitly consume it (currently the bundled `copilot-sdk`
+    // explicitly consume it (currently the bundled `github-copilot`
     // harness, which uses it as the SDK session-level `gitHubToken`
     // so a headless `/btw` call runs under the same GitHub identity
     // as the main attempt — content exclusion, model routing, and
@@ -344,7 +344,7 @@ export async function runBtwSideQuestion(
     // boundary as narrow as the existing main-attempt path. See
     // AgentHarnessSideQuestionParams.resolvedApiKey docstring.
     let resolvedApiKey: string | undefined;
-    if (harness.id === "copilot-sdk") {
+    if (harness.id === "github-copilot") {
       try {
         const apiKeyInfo = await getApiKeyForModel({
           model,

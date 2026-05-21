@@ -568,22 +568,22 @@ describe("runBtwSideQuestion", () => {
     expect(registerProviderStreamForModelMock).not.toHaveBeenCalled();
   });
 
-  it("G2: forwards resolvedApiKey to the copilot-sdk harness side-question hook (production /btw auth)", async () => {
-    // The copilot-sdk harness needs the resolved auth-profile token
+  it("G2: forwards resolvedApiKey to the github-copilot agent runtime side-question hook (production /btw auth)", async () => {
+    // The github-copilot agent runtime needs the resolved auth-profile token
     // forwarded so its throwaway side-question session runs under the
     // same GitHub identity as the main attempt. Before round-5 the
     // contract field did not exist and btw.ts never called
     // getApiKeyForModel, so headless `/btw` from a github-copilot
     // profile silently fell back to env / useLoggedInUser.
-    const copilotSdkSideQuestionMock = vi
+    const githubCopilotSideQuestionMock = vi
       .fn()
-      .mockResolvedValue({ text: "copilot-sdk side answer." });
+      .mockResolvedValue({ text: "github-copilot side answer." });
     registerAgentHarness({
-      id: "copilot-sdk",
-      label: "Copilot SDK test harness",
+      id: "github-copilot",
+      label: "GitHub Copilot agent runtime test harness",
       supports: () => ({ supported: true, priority: 100 }),
       runAttempt: vi.fn(),
-      runSideQuestion: copilotSdkSideQuestionMock,
+      runSideQuestion: githubCopilotSideQuestionMock,
     });
     resolveModelWithRegistryMock.mockReturnValue({
       provider: "github-copilot",
@@ -603,15 +603,15 @@ describe("runBtwSideQuestion", () => {
       sessionKey: DEFAULT_SESSION_KEY,
     });
 
-    expect(result).toEqual({ text: "copilot-sdk side answer." });
+    expect(result).toEqual({ text: "github-copilot side answer." });
     expect(getApiKeyForModelMock).toHaveBeenCalledTimes(1);
     const [[getKeyArgs]] = getApiKeyForModelMock.mock.calls as unknown as Array<
       [{ profileId?: string; model?: { provider?: string; id?: string } }]
     >;
     expect(getKeyArgs.profileId).toBe("github-copilot:work");
     expect(getKeyArgs.model?.provider).toBe("github-copilot");
-    expect(copilotSdkSideQuestionMock).toHaveBeenCalledTimes(1);
-    const [[sideQuestionParams]] = copilotSdkSideQuestionMock.mock.calls as unknown as Array<
+    expect(githubCopilotSideQuestionMock).toHaveBeenCalledTimes(1);
+    const [[sideQuestionParams]] = githubCopilotSideQuestionMock.mock.calls as unknown as Array<
       [
         {
           authProfileId?: string;
@@ -623,7 +623,7 @@ describe("runBtwSideQuestion", () => {
     expect(sideQuestionParams.resolvedApiKey).toBe("ghp-resolved-token-xyz");
   });
 
-  it("G2: does NOT call getApiKeyForModel or forward resolvedApiKey for non-copilot-sdk harnesses (credential boundary stays narrow)", async () => {
+  it("G2: does NOT call getApiKeyForModel or forward resolvedApiKey for non-github-copilot agent runtimees (credential boundary stays narrow)", async () => {
     // The contract field exists on AgentHarnessSideQuestionParams but
     // btw.ts must only populate it for harnesses that explicitly
     // consume it. Forwarding a raw token to e.g. the codex harness
@@ -657,17 +657,17 @@ describe("runBtwSideQuestion", () => {
     expect(sideQuestionParams.resolvedApiKey).toBeUndefined();
   });
 
-  it("G2: copilot-sdk side question still runs (without resolvedApiKey) when getApiKeyForModel rejects", async () => {
+  it("G2: github-copilot side question still runs (without resolvedApiKey) when getApiKeyForModel rejects", async () => {
     // Auth resolution failure must not break `/btw`: the harness
     // can still fall back to env / useLoggedInUser. Surfacing the
     // error here would be more disruptive than the upstream behavior.
-    const copilotSdkSideQuestionMock = vi.fn().mockResolvedValue({ text: "fallback answer." });
+    const githubCopilotSideQuestionMock = vi.fn().mockResolvedValue({ text: "fallback answer." });
     registerAgentHarness({
-      id: "copilot-sdk",
-      label: "Copilot SDK test harness",
+      id: "github-copilot",
+      label: "GitHub Copilot agent runtime test harness",
       supports: () => ({ supported: true, priority: 100 }),
       runAttempt: vi.fn(),
-      runSideQuestion: copilotSdkSideQuestionMock,
+      runSideQuestion: githubCopilotSideQuestionMock,
     });
     resolveModelWithRegistryMock.mockReturnValue({
       provider: "github-copilot",
@@ -684,8 +684,8 @@ describe("runBtwSideQuestion", () => {
     });
 
     expect(result).toEqual({ text: "fallback answer." });
-    expect(copilotSdkSideQuestionMock).toHaveBeenCalledTimes(1);
-    const [[sideQuestionParams]] = copilotSdkSideQuestionMock.mock.calls as unknown as Array<
+    expect(githubCopilotSideQuestionMock).toHaveBeenCalledTimes(1);
+    const [[sideQuestionParams]] = githubCopilotSideQuestionMock.mock.calls as unknown as Array<
       [{ resolvedApiKey?: string }]
     >;
     expect(sideQuestionParams.resolvedApiKey).toBeUndefined();
