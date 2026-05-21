@@ -7,16 +7,11 @@ import { createCopilotAgentHarness } from "./harness.js";
 
 const mocks = vi.hoisted(() => ({
   runCopilotAttempt: vi.fn(),
-  runCopilotSideQuestion: vi.fn(),
   createCopilotClientPool: vi.fn(),
 }));
 
 vi.mock("./src/attempt.js", () => ({
   runCopilotAttempt: mocks.runCopilotAttempt,
-}));
-
-vi.mock("./src/side-question.js", () => ({
-  runCopilotSideQuestion: mocks.runCopilotSideQuestion,
 }));
 
 vi.mock("./src/runtime.js", () => ({
@@ -52,10 +47,8 @@ async function flushAsyncWork() {
 describe("createCopilotAgentHarness", () => {
   beforeEach(() => {
     mocks.runCopilotAttempt.mockReset();
-    mocks.runCopilotSideQuestion.mockReset();
     mocks.createCopilotClientPool.mockReset();
     mocks.runCopilotAttempt.mockResolvedValue(ATTEMPT_RESULT);
-    mocks.runCopilotSideQuestion.mockResolvedValue({ text: "answer" });
     mocks.createCopilotClientPool.mockImplementation(() => makePoolMock());
   });
 
@@ -861,60 +854,9 @@ describe("createCopilotAgentHarness", () => {
   });
 
   describe("runSideQuestion", () => {
-    it("delegates to runCopilotSideQuestion with the pool", async () => {
-      const pool = makePoolMock();
-      const harness = createCopilotAgentHarness({ pool });
-      const params = { provider: "github-copilot", model: "gpt-4.1", question: "hi?" } as any;
-
-      const result = await harness.runSideQuestion?.(params);
-
-      expect(result).toEqual({ text: "answer" });
-      expect(mocks.runCopilotSideQuestion).toHaveBeenCalledTimes(1);
-      expect(mocks.runCopilotSideQuestion).toHaveBeenCalledWith(
-        params,
-        expect.objectContaining({ pool }),
-      );
-    });
-
-    it("throws when called after dispose", async () => {
+    it("is not implemented; /btw falls through to the in-tree PI fallback path", () => {
       const harness = createCopilotAgentHarness({ pool: makePoolMock() });
-      await harness.dispose?.();
-      await expect(harness.runSideQuestion?.({ question: "hi?" } as any)).rejects.toThrow(
-        /has been disposed/,
-      );
-      expect(mocks.runCopilotSideQuestion).not.toHaveBeenCalled();
-    });
-
-    it("propagates the side-question error to the caller", async () => {
-      const err = new Error("boom");
-      mocks.runCopilotSideQuestion.mockRejectedValueOnce(err);
-      const harness = createCopilotAgentHarness({ pool: makePoolMock() });
-      await expect(harness.runSideQuestion?.({ question: "hi?" } as any)).rejects.toBe(err);
-    });
-
-    it("dispose waits for in-flight side questions before disposing the pool", async () => {
-      const pool = makePoolMock();
-      const deferred = createDeferred<{ text: string }>();
-      mocks.runCopilotSideQuestion.mockReturnValueOnce(deferred.promise);
-      const harness = createCopilotAgentHarness({ pool });
-
-      const sidePromise = harness.runSideQuestion?.({ question: "hi?" } as any);
-      await flushAsyncWork();
-
-      const disposePromise = harness.dispose?.();
-      let disposeSettled = false;
-      void disposePromise?.then(() => {
-        disposeSettled = true;
-      });
-      await flushAsyncWork();
-
-      expect(pool.dispose).not.toHaveBeenCalled();
-      expect(disposeSettled).toBe(false);
-
-      deferred.resolve({ text: "done" });
-      await expect(sidePromise).resolves.toEqual({ text: "done" });
-      await disposePromise;
-      expect(disposeSettled).toBe(true);
+      expect(harness.runSideQuestion).toBeUndefined();
     });
   });
 });
