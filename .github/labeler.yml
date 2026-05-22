@@ -387,6 +387,11 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/codex/**"
+"extensions: copilot":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/copilot/**"
+          - "docs/plugins/copilot.md"
 "extensions: kimi-coding":
   - changed-files:
       - any-glob-to-any-file:
