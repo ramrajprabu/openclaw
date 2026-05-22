@@ -12,11 +12,12 @@ Copilot agent turns through the GitHub Copilot CLI (`@github/copilot-sdk`)
 instead of the built-in PI harness.
 
 Use the Copilot SDK harness when you want the Copilot CLI session to own the
-low-level agent loop: native tool execution, native side questions, native
-compaction (`infiniteSessions`), and CLI-managed thread state under
-`copilotHome`. OpenClaw still owns chat channels, session files, model
-selection, OpenClaw dynamic tools (bridged), approvals, media delivery, the
-visible transcript mirror, and `openclaw doctor`.
+low-level agent loop: native tool execution, native compaction
+(`infiniteSessions`), and CLI-managed thread state under `copilotHome`.
+OpenClaw still owns chat channels, session files, model selection, OpenClaw
+dynamic tools (bridged), approvals, media delivery, the visible transcript
+mirror, `/btw` side questions (handled by the in-tree PI fallback — see
+[Side questions (`/btw`)](#side-questions-btw)), and `openclaw doctor`.
 
 For the broader model/provider/runtime split, start with
 [Agent runtimes](/concepts/agent-runtimes).
@@ -164,13 +165,20 @@ write failure cannot fail the attempt: an internal best-effort wrapper and a
 defense-in-depth `.catch(...)` at the attempt level. Failures are logged but
 not surfaced.
 
-## Side questions
+## Side questions (`/btw`)
 
-`harness.runSideQuestion` uses a pooled transient SDK session per agent:
-`client.createSession({ infiniteSessions: false, tools: [] })` →
-`sendAndWait(...)` → `disconnect`. The session is held in `inFlight` until the
-side question settles, so harness `dispose` waits for in-flight side questions
-to drain before tearing the pool down.
+`/btw` is **not** native on this harness. `createCopilotAgentHarness()`
+deliberately leaves `harness.runSideQuestion` undefined, so OpenClaw's `/btw`
+dispatcher (`src/agents/btw.ts`) falls through to the same in-tree PI fallback
+path it uses for every non-Codex runtime: the configured model provider is
+called directly with a short side-question prompt and streamed back via
+`streamSimple` (no CLI session, no extra pool slot).
+
+This keeps Copilot CLI sessions reserved for the agent's main turn loop, and
+keeps `/btw` behavior identical to other PI-backed runtimes. The contract is
+asserted in
+[`extensions/copilot/harness.test.ts`](https://github.com/openclaw/openclaw/blob/main/extensions/copilot/harness.test.ts)
+under `describe("runSideQuestion")`.
 
 ## Doctor and probes
 
@@ -289,7 +297,7 @@ via `resolveCopilotAuth` and sets both fields when the auth mode is
 `resolvedApiKey` from a configured `github-copilot` auth profile).
 When the resolved mode is `useLoggedInUser`, the session-level field
 is omitted so the SDK keeps deriving identity from the logged-in
-identity. The same plumbing applies to side-question sessions.
+identity.
 
 `ask_user` is intentionally hidden — see Limitations above.
 

@@ -139,8 +139,8 @@ describe("resolveCopilotAuth - copilotHome resolution", () => {
       homeDir: fakeHomeDir,
     });
     expect(a.copilotHome).not.toBe(b.copilotHome);
-    expect(a.copilotHome.endsWith("agent-a/copilot")).toBe(true);
-    expect(b.copilotHome.endsWith("agent-b/copilot")).toBe(true);
+    expect(a.copilotHome.endsWith(join("agent-a", "copilot"))).toBe(true);
+    expect(b.copilotHome.endsWith(join("agent-b", "copilot"))).toBe(true);
   });
 });
 

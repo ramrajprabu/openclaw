@@ -513,6 +513,16 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
+  extensions/copilot:
+    dependencies:
+      '@github/copilot-sdk':
+        specifier: 1.0.0-beta.4
+        version: 1.0.0-beta.4
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+
   extensions/copilot-proxy:
     devDependencies:
       '@openclaw/plugin-sdk':
@@ -734,16 +744,6 @@ importers:
       '@earendil-works/pi-ai':
         specifier: 0.75.4
         version: 0.75.4(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.1)(zod@4.4.3)
-      '@openclaw/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-
-  extensions/github-copilot-agent-runtime:
-    dependencies:
-      '@github/copilot-sdk':
-        specifier: 1.0.0-beta.4
-        version: 1.0.0-beta.4
-    devDependencies:
       '@openclaw/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
